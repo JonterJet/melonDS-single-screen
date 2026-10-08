@@ -129,7 +129,9 @@ void ScreenLayout::Setup(int screenWidth, int screenHeight,
     bool swapScreens,
     float topAspect, float botAspect)
 {
-    HybEnable = screenLayout == 3;
+    // Single-screen sizing takes precedence over the hybrid three-view layout.
+    HybEnable = screenLayout == screenLayout_Hybrid
+        && sizing != screenSizing_TopOnly && sizing != screenSizing_BotOnly;
     if (HybEnable)
     {
         screenLayout = screenLayout_Natural;

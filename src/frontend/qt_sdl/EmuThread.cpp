@@ -157,6 +157,12 @@ void EmuThread::run()
 
         emuInstance->inputProcess();
 
+        // Presentation only: poll even while paused, and restore the top view
+        // when the binding is released or its controller disconnects.
+        bool revealBottom = emuInstance->hotkeyDown(HK_RevealBottomScreen);
+        if (bottomScreenRevealed.exchange(revealBottom) != revealBottom)
+            emit bottomScreenRevealChange(revealBottom);
+
         if (emuInstance->hotkeyPressed(HK_FrameLimitToggle)) emit windowLimitFPSChange();
 
         if (emuInstance->hotkeyPressed(HK_Pause)) emuTogglePause();

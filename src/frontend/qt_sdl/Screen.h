@@ -59,6 +59,7 @@ public:
     virtual ~ScreenPanel();
 
     void setFilter(bool filter);
+    void onBottomScreenRevealChanged(bool revealed);
 
     void setMouseHide(bool enable, int delay);
 
@@ -87,6 +88,7 @@ protected:
     int screenLayout;
     bool screenSwap;
     int screenSizing;
+    bool bottomScreenRevealed = false;
     bool integerScaling;
     int screenAspectTop, screenAspectBot;
 

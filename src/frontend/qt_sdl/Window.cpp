@@ -859,6 +859,9 @@ void MainWindow::createScreenPanel()
     panel->osdSetEnabled(showOSD);
 
     connect(emuThread, SIGNAL(windowUpdate()), panel, SLOT(repaint()));
+    connect(emuThread, &EmuThread::bottomScreenRevealChange,
+            panel, &ScreenPanel::onBottomScreenRevealChanged);
+    panel->onBottomScreenRevealChanged(emuThread->isBottomScreenRevealed());
 
     connect(this, SIGNAL(screenLayoutChange()), panel, SLOT(onScreenLayoutChanged()));
     emit screenLayoutChange();

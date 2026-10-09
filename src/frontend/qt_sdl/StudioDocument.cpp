@@ -9,14 +9,42 @@
 #include <QJsonDocument>
 #include <QSaveFile>
 #include <cmath>
+#include <QUuid>
+#include <QSet>
 
 StudioDocument::StudioDocument()
 {
-    for (int i = 0; i < StudioStateCount; ++i)
-        layouts[i] = i < StudioMarioFirst ? StudioLayout::Existing : StudioLayout::Both;
-    layouts[StudioRacing] = StudioLayout::Top;
+    profileId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    addScene("Gameplay"); addScene("Menus"); addScene("Cutscenes");
 }
-QString StudioDocument::stateName(int state)
+int StudioDocument::addScene(const QString& name)
+{
+    sceneNames.append(name.trimmed().isEmpty() ? "New scene" : name.trimmed().left(128));
+    sceneIds.append(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    elements.append(QVector<StudioElement>{}); references.append(QVector<StudioReference>{});
+    layouts.append(StudioLayout::Existing); dirty = true; return sceneCount()-1;
+}
+void StudioDocument::duplicateScene(int i)
+{
+    if(i<0 || i>=sceneCount()) return;
+    int row=addScene(sceneNames[i]+" copy"); elements[row]=elements[i]; references[row]=references[i]; layouts[row]=layouts[i];
+    moveScene(row,i+1); activeState=i+1;
+}
+void StudioDocument::removeScene(int i)
+{
+    if(i<0 || i>=sceneCount()) return;
+    sceneNames.removeAt(i); sceneIds.removeAt(i); elements.removeAt(i); references.removeAt(i); layouts.removeAt(i);
+    if(sceneCount()==0) addScene("New scene");
+    activeState=qBound(0,activeState>i ? activeState-1 : activeState,sceneCount()-1); dirty=true;
+}
+void StudioDocument::moveScene(int from,int to)
+{
+    if(from<0 || to<0 || from>=sceneCount() || to>=sceneCount()) return;
+    QString active=sceneIds[activeState];
+    sceneNames.move(from,to); sceneIds.move(from,to); elements.move(from,to); references.move(from,to); layouts.move(from,to);
+    activeState=sceneIds.indexOf(active); dirty=true;
+}
+QString StudioDocument::legacyStateName(int state)
 {
     return QStringList{"Gameplay", "Menus", "Cutscenes", "Main menus", "Character / kart selection",
         "Racing", "Pause menus", "Race results"}.value(state);
@@ -57,12 +85,15 @@ bool text(const QJsonValue& v)
 QJsonObject StudioDocument::toJson() const
 {
     QJsonArray states;
-    for (int i = 0; i < StudioStateCount; ++i)
+    for (int i = 0; i < sceneCount(); ++i)
     {
         QJsonArray items, refs;
         for (const auto& e : elements[i])
+        {
+            QJsonArray polygon; for(const auto& p : e.polygon) polygon.append(QJsonArray{p.x(),p.y()});
             items.append(QJsonObject{{"name", e.name}, {"screen", e.screen}, {"x", e.x}, {"y", e.y},
-                {"width", e.width}, {"height", e.height}, {"enabled", e.enabled}, {"destination", rectJson(e.destination)}});
+                {"width", e.width}, {"height", e.height}, {"enabled", e.enabled}, {"destination", rectJson(e.destination)}, {"polygon",polygon}});
+        }
         for (const auto& r : references[i])
         {
             QByteArray png;
@@ -71,10 +102,10 @@ QJsonObject StudioDocument::toJson() const
             refs.append(QJsonObject{{"name", r.name}, {"screen", r.screen}, {"region", rectJson(r.region)},
                 {"png", QString::fromLatin1(png.toBase64())}, {"threshold", r.threshold}, {"enabled", r.enabled}});
         }
-        states.append(QJsonObject{{"name", stateName(i)}, {"layout", int(layouts[i])}, {"elements", items}, {"references", refs}});
+        states.append(QJsonObject{{"name", sceneName(i)}, {"id",sceneIds[i]}, {"layout", int(layouts[i])}, {"elements", items}, {"references", refs}});
     }
-    return {{"format", "MelonStudio"}, {"version", 2}, {"gameId", gameId}, {"gameLabel", gameLabel},
-        {"activeState", activeState}, {"states", states}, {"marioEnabled", marioEnabled}, {"automatic", automatic},
+    return {{"format", "MelonStudio"}, {"version", 3}, {"gameId", gameId}, {"gameLabel", gameLabel},
+        {"activeState", activeState}, {"scenes", states}, {"profileId",profileId}, {"sceneToolsEnabled", sceneToolsEnabled}, {"automatic", automatic},
         {"fallback", int(fallback)}, {"confirmationMs", confirmationMs}, {"ambiguityMargin", ambiguityMargin}};
 }
 bool StudioDocument::save(const QString& path, QString& error)
@@ -84,7 +115,7 @@ bool StudioDocument::save(const QString& path, QString& error)
     { error = "Cannot back up the original version 1 profile."; return false; }
     QSaveFile file(path);
     const auto json = toJson();
-    for (const auto& state : json["states"].toArray())
+    for (const auto& state : json["scenes"].toArray())
         for (const auto& reference : state.toObject()["references"].toArray())
             if (reference.toObject()["png"].toString().isEmpty())
             { error = "Cannot encode a visual reference as PNG."; return false; }
@@ -105,29 +136,41 @@ bool StudioDocument::load(const QString& path, QString& error)
     auto root = json.object();
     auto invalid = [&]() { error = "Invalid, wrong-game, or incompatible MelonStudio profile."; return false; };
     if (parseError.error != QJsonParseError::NoError || !json.isObject() || root["format"] != "MelonStudio"
-        || !integer(root["version"], 1, 2) || root["gameId"] != gameId || !root["gameLabel"].isString()
-        || !root["states"].isArray()) return invalid();
+        || !integer(root["version"], 1, 3) || (!gameId.isEmpty() && root["gameId"] != gameId) || !root["gameLabel"].isString()
+        || !root[root["version"].toInt()==3 ? "scenes" : "states"].isArray()) return invalid();
     bool legacy = root["version"].toInt() == 1;
-    int count = legacy ? 3 : StudioStateCount;
-    if (!integer(root["activeState"], 0, count - 1) || root["states"].toArray().size() != count) return invalid();
-    StudioDocument candidate; candidate.legacyProfile = legacy;
-    candidate.gameId = gameId; candidate.gameLabel = gameLabel;
+    bool modern=root["version"].toInt()==3;
+    auto states=root[modern ? "scenes" : "states"].toArray();
+    int count=modern ? states.size() : legacy ? 3 : StudioLegacyStateCount;
+    if(count<1 || states.size()!=count || !integer(root["activeState"],0,count-1)) return invalid();
+    StudioDocument candidate; candidate.legacyProfile = !modern; candidate.sceneToolsEnabled=false;
+    candidate.sceneNames.clear(); candidate.sceneIds.clear(); candidate.elements.clear(); candidate.references.clear(); candidate.layouts.clear();
+    candidate.gameId=root["gameId"].toString(); candidate.gameLabel=root["gameLabel"].toString();
+    if(modern) {
+        if(!root["profileId"].isString() || QUuid(root["profileId"].toString()).isNull()) return invalid();
+        candidate.profileId=root["profileId"].toString();
+    }
     candidate.activeState = root["activeState"].toInt();
     if (!legacy)
     {
-        if (!root["marioEnabled"].isBool() || !root["automatic"].isBool() || !integer(root["fallback"], 0, 3)
+        QString enabledKey=modern ? "sceneToolsEnabled" : "marioEnabled";
+        if (!root[enabledKey].isBool() || !root["automatic"].isBool() || !integer(root["fallback"], 0, 3)
             || !integer(root["confirmationMs"], 0, 5000) || !number(root["ambiguityMargin"], 0, 1)) return invalid();
-        candidate.marioEnabled = root["marioEnabled"].toBool();
+        candidate.sceneToolsEnabled = root[enabledKey].toBool();
         candidate.automatic = root["automatic"].toBool();
         candidate.fallback = StudioLayout(root["fallback"].toInt());
         candidate.confirmationMs = root["confirmationMs"].toInt();
         candidate.ambiguityMargin = root["ambiguityMargin"].toDouble();
     }
-    auto states = root["states"].toArray();
     for (int i = 0; i < count; ++i)
     {
         auto s = states[i].toObject();
-        if (s["name"] != stateName(i) || !s["elements"].isArray() || s["elements"].toArray().size() > 512) return invalid();
+        if ((!modern && s["name"] != legacyStateName(i)) || (modern && !text(s["name"])) || !s["elements"].isArray()) return invalid();
+        candidate.addScene(s["name"].toString());
+        if(modern) {
+            if(!s["id"].isString() || QUuid(s["id"].toString()).isNull()) return invalid();
+            candidate.sceneIds[i]=s["id"].toString();
+        }
         if (!legacy)
         {
             if (!integer(s["layout"], 0, 3) || !s["references"].isArray()) return invalid();
@@ -141,12 +184,22 @@ bool StudioDocument::load(const QString& path, QString& error)
                 || !readRect(QJsonArray{o["x"], o["y"], o["width"], o["height"]}, src)
                 || (!legacy && !readRect(o["destination"], dest))) return invalid();
             StudioElement e{o["name"].toString(), o["screen"].toInt(), src.x(), src.y(), src.width(), src.height(), o["enabled"].toBool()};
-            e.destination = dest; candidate.elements[i].append(e);
+            e.destination = dest;
+            if(modern) {
+                if(!o["polygon"].isArray() || o["polygon"].toArray().size()>4096) return invalid();
+                for(auto v : o["polygon"].toArray()) {
+                    auto point=v.toArray();
+                    if(point.size()!=2 || !number(point[0],0,256) || !number(point[1],0,192)) return invalid();
+                    e.polygon.append(QPointF(point[0].toDouble(),point[1].toDouble()));
+                }
+                if(!e.polygon.isEmpty() && (e.polygon.size()<3 || !QRectF(src).contains(e.polygon.boundingRect()))) return invalid();
+            }
+            candidate.elements[i].append(e);
         }
         if (!legacy) for (auto value : s["references"].toArray())
         {
             auto r = value.toObject(); QRect region;
-            if (candidate.referenceCount() >= 64 || !text(r["name"]) || !integer(r["screen"], 0, 1)
+            if (!text(r["name"]) || !integer(r["screen"], 0, 1)
                 || !readRect(r["region"], region) || !number(r["threshold"], 0, 1)
                 || !r["enabled"].isBool() || !r["png"].isString() || r["png"].toString().size() > 400000) return invalid();
             auto decoded = QByteArray::fromBase64Encoding(r["png"].toString().toLatin1(), QByteArray::AbortOnBase64DecodingErrors);
@@ -159,6 +212,8 @@ bool StudioDocument::load(const QString& path, QString& error)
                 image.convertToFormat(QImage::Format_RGB32), r["threshold"].toDouble(), r["enabled"].toBool()});
         }
     }
+    if(QSet<QString>(candidate.sceneIds.begin(),candidate.sceneIds.end()).size()!=count) return invalid();
+    candidate.dirty=false;
     *this = candidate; // Transactional load; rejected profiles never replace the current document.
     return true;
 }

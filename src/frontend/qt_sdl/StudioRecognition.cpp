@@ -22,9 +22,9 @@ double StudioRecognition::similarity(const QImage& frame, const StudioReference&
 void StudioRecognition::reset() { pending = -2; stable = -1; previous = -1; since = 0; unstableSince = -1; }
 StudioMatch StudioRecognition::update(const QImage (&frames)[2], const StudioDocument& d, qint64 nowMs)
 {
-    StudioMatch m;
+    StudioMatch m; m.scores.fill(0,d.sceneCount());
     double winner = -1, runner = -1;
-    for (int state = StudioMarioFirst; state < StudioStateCount; ++state)
+    for (int state = 0; state < d.sceneCount(); ++state)
     {
         double accepted = -1;
         for (const auto& r : d.references[state]) if (r.enabled)

@@ -6,6 +6,7 @@
 #include <QMutex>
 #include <atomic>
 #include "StudioDocument.h"
+#include "StudioProfiles.h"
 #include "StudioRecognition.h"
 #include <QElapsedTimer>
 
@@ -23,6 +24,8 @@ class QToolBar;
 class QListWidget;
 class QDoubleSpinBox;
 class QMenu;
+class QPushButton;
+class QTimer;
 class StudioHudCanvas;
 
 class StudioEditor : public QObject
@@ -32,6 +35,7 @@ public:
     explicit StudioEditor(MainWindow* window);
     bool saveOnClose();
     void clearScreens();
+    void prepareFullscreen() { saveWorkspace(); }
     void setFullscreen(bool full);
     void setGame(const QString& id, const QString& label);
     // Called only by the rendering thread with its OpenGL context current.
@@ -42,6 +46,28 @@ public:
 
 private:
     MainWindow* window;
+    StudioProfiles profiles;
+    QString currentRom, currentRomLabel;
+    QTreeWidget* profileTree;
+    QByteArray defaultDockState;
+    void addPolygon(bool edit=false);
+    bool viewportDrag=false, viewportResize=false;
+    QPoint viewportOrigin;
+    QRect viewportInitial;
+    void initializeProfiles(QWidget* widget);
+    void refreshProfiles();
+    void chooseProfile(const QString& id, int scene=-1);
+    void saveWorkspace();
+    void restoreWorkspace();
+    void resetWorkspace();
+    bool eventFilter(QObject* object,QEvent* event) override;
+    QByteArray editorState, editorGeometry;
+    bool eatEscapeRelease=false, editorToolbarVisible=true;
+    bool editorMaximized=false, playStartedFullscreen=false;
+    QPushButton* exitPlay;
+    QTimer* exitTimer;
+    QPoint lastMousePosition;
+    void resetPlayMouse();
     StudioDocument document;
     QVector<QDockWidget*> docks;
     QVector<bool> dockVisibility;
@@ -82,8 +108,8 @@ private:
     StudioHudCanvas* hudCanvas;
     QWidget* rules;
 
-    void initializeMarioControls(QWidget* sceneWidget);
-    void refreshMarioControls();
+    void initializeSceneControls(QWidget* sceneWidget);
+    void refreshSceneControls();
     void refreshReferences();
     void editReference();
     void settingsChanged();

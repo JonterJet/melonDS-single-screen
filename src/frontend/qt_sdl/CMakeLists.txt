@@ -8,10 +8,16 @@ set(SOURCES_QT_SDL
     Screen.cpp
     Window.cpp
     StudioEditor.cpp
-    StudioMario.cpp
+    StudioSceneTools.cpp
+    StudioWorkspace.cpp
+    StudioHud.cpp
+    StudioPolygon.cpp
+    StudioPolygon.h
     StudioEditor.h
     StudioDocument.cpp
     StudioDocument.h
+    StudioProfiles.cpp
+    StudioProfiles.h
     StudioRecognition.cpp
     StudioRecognition.h
     StudioRendering.cpp
@@ -296,7 +302,7 @@ endif()
 if (MELONSTUDIO_BUILD_TESTS AND USE_QT6)
     add_executable(studio_recognition_tests
         ${CMAKE_SOURCE_DIR}/tests/frontend/studio_recognition.cpp
-        StudioDocument.cpp StudioRecognition.cpp StudioRendering.cpp)
+        StudioDocument.cpp StudioProfiles.cpp StudioRecognition.cpp StudioRendering.cpp)
     target_include_directories(studio_recognition_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(studio_recognition_tests PRIVATE Qt6::Core Qt6::Gui)
     add_test(NAME studio_synthetic COMMAND studio_recognition_tests)

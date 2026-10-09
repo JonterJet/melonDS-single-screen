@@ -6,9 +6,12 @@
 #include <array>
 struct StudioPresentation
 {
+    int selected = -1;
     int sizing = -1; // -1 leaves the user's existing emulator layout intact.
     QVector<StudioElement> overlays;
 };
 std::array<float, 30> studioOverlayVertices(const StudioElement& element);
+QImage studioPolygonMask(const StudioElement& element);
+void paintStudioSelection(QPainter& painter,const StudioElement& element);
 void paintStudioOverlays(QPainter& painter, const QImage (&screens)[2], const QVector<StudioElement>& elements);
 #endif

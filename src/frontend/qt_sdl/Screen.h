@@ -60,6 +60,7 @@ public:
     virtual ~ScreenPanel();
 
     void setFilter(bool filter);
+    QTransform studioTransform();
     void setStudioPresentation(const StudioPresentation& presentation);
     void onBottomScreenRevealChanged(bool revealed);
 
@@ -104,6 +105,8 @@ protected:
     QMutex studioMutex;
     int studioSizing = -1;
     QVector<StudioElement> studioOverlays;
+    QVector<QImage> studioMasks;
+    int studioSelected=-1;
     bool studioRevealActive = false;
 
     bool touching = false;
@@ -230,7 +233,7 @@ private:
 
     GLuint screenVertexBuffer, screenVertexArray;
     GLuint screenTexture;
-    GLuint studioVertexBuffer = 0, studioVertexArray = 0;
+    GLuint studioVertexBuffer = 0, studioVertexArray = 0, studioMaskTexture=0;
     GLuint screenShaderProgram;
     GLint screenShaderTransformULoc, screenShaderScreenSizeULoc;
 

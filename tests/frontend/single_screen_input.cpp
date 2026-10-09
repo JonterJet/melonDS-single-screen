@@ -1,6 +1,8 @@
 // Integration test using the production frontend, an SDL virtual controller,
 // and the real paused emulation thread; no game or BIOS assets are required.
 #include "main.h"
+#include "StudioEditor.h"
+#include <QPushButton>
 #include <QKeyEvent>
 #include <QTemporaryDir>
 #include <QStyle>
@@ -133,6 +135,15 @@ int main(int argc, char** argv)
             require(native.count()==3 && gl.count()==3,"Scene Both override lost Hybrid");
             native.setStudioPresentation({}); gl.setStudioPresentation({});
             cfg.SetInt("ScreenSizing",screenSizing_TopOnly); native.reload(); gl.reload(); ++cases;
+            // Ordinary physical-controller events must not expose Play's mouse-only Exit control.
+            auto editor=window->findChild<StudioEditor*>(); QAction* play=nullptr;
+            for(auto action:window->findChildren<QAction*>()) if(action->text()=="Play") play=action;
+            require(editor && play,"Play controls unavailable"); play->setChecked(true); QApplication::processEvents();
+            auto exit=window->findChild<QPushButton*>("StudioExitPlay");
+            press(true); await([&] { return thread->isBottomScreenRevealed(); },"Controller reveal must work in Play");
+            require(editor->isPlayMode() && exit && !exit->isVisible(),"Gamepad button must not reveal Exit Play");
+            press(false); await([&] { return !thread->isBottomScreenRevealed(); },"Play reveal release");
+            require(!exit->isVisible(),"Gamepad release must not reveal Exit Play"); play->setChecked(false); ++cases;
             // Both bindings contribute to the held state; releasing one must
             // not hide the bottom screen while the other remains pressed.
             QKeyEvent keyDown(QEvent::KeyPress, Qt::Key_F9, Qt::NoModifier);

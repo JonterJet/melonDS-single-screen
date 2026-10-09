@@ -1,5 +1,6 @@
 // Synthetic frames only: no Mario Kart DS ROM, game screenshot, or memory addresses.
 #include "StudioRecognition.h"
+#include "StudioProfiles.h"
 #include "StudioRendering.h"
 #include <QCoreApplication>
 #include <QFile>
@@ -24,16 +25,17 @@ int main(int argc, char** argv)
     try
     {
         StudioDocument d; d.gameId = "synthetic-mkds"; d.gameLabel = "Synthetic tests";
-        d.marioEnabled = d.automatic = true;
-        for (int i = StudioMarioFirst; i < StudioStateCount; ++i)
+        while(d.sceneCount()<8) d.addScene(StudioDocument::legacyStateName(d.sceneCount()));
+        d.sceneToolsEnabled = d.automatic = true;
+        for (int i = StudioLegacyMarioFirst; i < StudioLegacyStateCount; ++i)
         {
             QImage f[2]; frames(i,f); QRect roi(16,12,80,32); int screen = i%2;
-            d.references[i].append({StudioDocument::stateName(i),screen,roi,f[screen].copy(roi),0.99,true});
+            d.references[i].append({StudioDocument::legacyStateName(i),screen,roi,f[screen].copy(roi),0.99,true});
         }
-        QImage f[2]; frames(StudioRacing,f);
-        check(StudioRecognition::similarity(f[1],d.references[StudioRacing][0]) == 1, "Exact match score");
-        check(StudioRecognition::similarity(QImage(),d.references[StudioRacing][0]) == 0, "Missing frame score");
-        for (int state = StudioMarioFirst; state < StudioStateCount; ++state)
+        QImage f[2]; frames(StudioLegacyRacing,f);
+        check(StudioRecognition::similarity(f[1],d.references[StudioLegacyRacing][0]) == 1, "Exact match score");
+        check(StudioRecognition::similarity(QImage(),d.references[StudioLegacyRacing][0]) == 0, "Missing frame score");
+        for (int state = StudioLegacyMarioFirst; state < StudioLegacyStateCount; ++state)
         {
             StudioRecognition r; frames(state,f);
             check(r.update(f,d,0).state == -1, "Must start on fallback");
@@ -61,7 +63,7 @@ int main(int argc, char** argv)
         r.reset(); check(r.update(f,alternate,0).state == 5,"Multiple references are alternatives");
         alternate.references[5].last().enabled = false;
         r.reset(); check(r.update(f,alternate,0).state == -1,"Disabled references must not match");
-        StudioDocument threshold; threshold.confirmationMs = 0; threshold.references[5].append(ref);
+        StudioDocument threshold; while(threshold.sceneCount()<8) threshold.addScene("Custom scene"); threshold.confirmationMs = 0; threshold.references[5].append(ref);
         auto changed = f[ref.screen].copy();
         for (int y = ref.region.y(); y < ref.region.y()+ref.region.height(); ++y)
             for (int x = ref.region.x(); x < ref.region.x()+ref.region.width(); ++x)
@@ -78,18 +80,18 @@ int main(int argc, char** argv)
         check(d.save(path,error),"Version 2 save"); StudioDocument loaded; loaded.gameId = d.gameId; loaded.gameLabel = d.gameLabel;
         check(loaded.load(path,error) && loaded.toJson() == d.toJson(),"Detection settings, PNG references, overlays and layouts must round-trip");
         auto before = loaded.toJson(); auto invalid = before;
-        auto states = invalid["states"].toArray(); auto state = states[5].toObject(); auto refs = state["references"].toArray();
+        auto states = invalid["scenes"].toArray(); auto state = states[5].toObject(); auto refs = state["references"].toArray();
         auto badRef = refs[0].toObject(); badRef["region"] = QJsonArray{0,0,256,192}; refs[0] = badRef;
-        state["references"] = refs; states[5] = state; invalid["states"] = states;
+        state["references"] = refs; states[5] = state; invalid["scenes"] = states;
         QFile bad(dir.path()+"/bad.json"); bad.open(QIODevice::WriteOnly); bad.write(QJsonDocument(invalid).toJson()); bad.close();
         check(!loaded.load(bad.fileName(),error) && loaded.toJson() == before,"PNG dimension mismatch must be rejected transactionally");
         StudioDocument wrong; wrong.gameId = "wrong-game"; check(!wrong.load(path,error),"Wrong-game profile rejection");
         QJsonArray legacyStates;
-        for (int i = 0; i < 3; ++i) legacyStates.append(QJsonObject{{"name",StudioDocument::stateName(i)},
+        for (int i = 0; i < 3; ++i) legacyStates.append(QJsonObject{{"name",StudioDocument::legacyStateName(i)},
             {"elements",QJsonArray{QJsonObject{{"name","Legacy HUD"},{"screen",1},{"x",0},{"y",0},{"width",64},{"height",32},{"enabled",true}}}}});
         QJsonObject legacy{{"format","MelonStudio"},{"version",1},{"gameId",d.gameId},{"gameLabel",d.gameLabel},{"activeState",0},{"states",legacyStates}};
         QFile old(dir.path()+"/old.json"); old.open(QIODevice::WriteOnly); old.write(QJsonDocument(legacy).toJson()); old.close();
-        check(loaded.load(old.fileName(),error) && !loaded.marioEnabled && !loaded.automatic
+        check(loaded.load(old.fileName(),error) && !loaded.sceneToolsEnabled && !loaded.automatic
             && loaded.elements[0][0].name == "Legacy HUD", "Legacy profiles must migrate without changing behavior");
         check(loaded.save(old.fileName(),error) && QFile::exists(old.fileName()+".v1.bak"),"Migration must back up the original profile");
 
@@ -104,6 +106,41 @@ int main(int argc, char** argv)
         auto vertices = studioOverlayVertices(overlay);
         check(vertices[0] == 160 && vertices[1] == 120 && vertices[4] == 1
             && vertices[12] == 1 && vertices[13] == 1, "OpenGL overlay geometry and live texture layer");
+        // True polygon masks and native compositing must leave the exterior transparent.
+        overlay.polygon=QPolygonF{QPointF(0,0),QPointF(256,0),QPointF(128,192)};
+        auto mask=studioPolygonMask(overlay);
+        check(mask.constScanLine(180)[2]==0 && mask.constScanLine(50)[128]==255,"Polygon alpha exterior/interior");
+        overlays[0]=overlay; overlays[0].enabled=true;
+        check(render().pixelColor(162,176)==QColor(Qt::red) && render().pixelColor(200,140)==QColor(Qt::green),"Native polygon transparency after scaling");
+        d.elements[5][0]=overlay; check(d.save(path,error),"Polygon save");
+        check(loaded.load(path,error) && loaded.elements[5][0].polygon==overlay.polygon,"Polygon vertices round trip");
+        // Dynamic scenes have no fixed five-state restriction.
+        int custom=d.addScene("User scene: credits"); d.references[custom]=d.references[5]; d.references[5].clear();
+        d.confirmationMs=0; r.reset(); frames(5,f);
+        check(r.update(f,d,0).state==custom,"Recognition must find a custom scene");
+        d.sceneNames[custom]="Renamed credits"; QString sceneId=d.sceneIds[custom];
+        d.activeState=custom; d.moveScene(custom,0);
+        check(d.sceneName(0)=="Renamed credits" && d.sceneIds[0]==sceneId && d.activeState==0,"Scene reorder must preserve identity");
+        d.duplicateScene(0); check(d.references[1].size()==d.references[0].size() && d.sceneIds[1]!=d.sceneIds[0],"Scene duplication");
+        d.removeScene(0); check(d.activeState==0 && d.sceneName(0).contains("copy"),"Scene deletion");
+        for(int i=0;i<1000;++i) d.addScene(QString("Custom %1").arg(i));
+        check(d.sceneCount()>1000,"No fixed scene cap");
+        StudioProfiles store(dir.path()+"/profiles");
+        d.gameLabel="My game profile"; check(store.save(d,error) && store.prefer(d,error),"Profile creation and association");
+        auto originalId=d.profileId; StudioDocument duplicate;
+        check(store.duplicate(originalId,"Another profile",duplicate,error) && duplicate.profileId!=originalId,"Profile duplication");
+        duplicate.gameLabel="Renamed profile"; check(store.save(duplicate,error) && store.prefer(duplicate,error),"Profile rename/default");
+        StudioDocument automatic; check(store.forRom(d.gameId,"ROM label",QString{},automatic,error) && automatic.profileId==duplicate.profileId,"Associated profile auto load");
+        check(store.remove(duplicate.profileId,error),"Profile archive/delete");
+        check(store.forRom(d.gameId,"ROM label",QString{},automatic,error) && automatic.profileId==originalId,"Deleted profile fallback");
+        check(automatic.sceneCount()==d.sceneCount() && automatic.elements[5].size()==d.elements[5].size(),"Dynamic profile persistence");
+        // A version 2 file retains all eight scenes and reference images during import.
+        StudioDocument v2; while(v2.sceneCount()<8) v2.addScene(StudioDocument::legacyStateName(v2.sceneCount()));
+        v2.gameId="legacy-v2"; v2.gameLabel="Legacy Mario"; v2.references[5].append(ref); v2.layouts[5]=StudioLayout::Top;
+        auto v2json=v2.toJson(); v2json["version"]=2; v2json["marioEnabled"]=v2json.take("sceneToolsEnabled"); v2json["states"]=v2json.take("scenes");
+        QString v2path=dir.path()+"/v2.json"; QFile v2file(v2path); v2file.open(QIODevice::WriteOnly); v2file.write(QJsonDocument(v2json).toJson()); v2file.close();
+        StudioDocument imported; check(store.forRom("legacy-v2","Legacy Mario",v2path,imported,error),"Version 2 import");
+        check(imported.sceneCount()==8 && imported.references[5][0].image==ref.image && imported.layouts[5]==StudioLayout::Top && QFile::exists(v2path+".pre-v3.bak"),"Version 2 references/layout/backups preserved");
         std::cout << "Synthetic recognition: five states, thresholds, alternatives, ambiguity, confirmation, unknown/stale/unstable fallback; profile migration and live overlay tests passed\n";
     }
     catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }

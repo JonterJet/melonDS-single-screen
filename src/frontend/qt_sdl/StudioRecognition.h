@@ -6,7 +6,7 @@ struct StudioMatch
 {
     int candidate = -1, state = -1;
     double confidence = 0;
-    double scores[StudioStateCount]{};
+    QVector<double> scores;
     bool ambiguous = false;
     int pendingMs = 0;
 };

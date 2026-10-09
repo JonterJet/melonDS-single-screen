@@ -2,6 +2,12 @@
 #include "main.h"
 #include "StudioEditor.h"
 #include "StudioViews.h"
+#include "StudioPolygon.h"
+#include "StudioProfiles.h"
+#include <QInputDialog>
+#include <QMessageBox>
+#include <QTimer>
+#include <QTabWidget>
 extern const char* kScreenVS;
 extern const char* kScreenFS;
 #include <QListWidget>
@@ -53,6 +59,7 @@ static void checkGlOverlay(GLuint texture)
     glUseProgram(program); glUniform2f(glGetUniformLocation(program,"uScreenSize"),256,192);
     float matrix[]={1,0,0,1,0,0}; glUniformMatrix2x3fv(glGetUniformLocation(program,"uTransform"),1,GL_TRUE,matrix);
     glUniform1i(glGetUniformLocation(program,"ScreenTex"),0);
+    glUniform1i(glGetUniformLocation(program,"StudioMask"),1);
     GLuint output,fbo,vao,vbo;
     glGenTextures(1,&output); glBindTexture(GL_TEXTURE_2D,output);
     glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,256,192,0,GL_RGBA,GL_UNSIGNED_BYTE,nullptr);
@@ -77,6 +84,21 @@ static void checkGlOverlay(GLuint texture)
     glTexSubImage3D(GL_TEXTURE_2D_ARRAY,0,0,0,1,256,192,1,GL_BGRA,GL_UNSIGNED_BYTE,green.constData());
     draw(base); draw(overlay); require(pixel(180,140).green()>240,"GL overlay did not update with live pixels");
     draw(base); require(pixel(180,140).red()>240,"Omitting overlay did not restore base");
+    overlay.polygon=QPolygonF{QPointF(32,24),QPointF(160,24),QPointF(96,120)};
+    auto mask=studioPolygonMask(overlay); GLuint maskTexture; glGenTextures(1,&maskTexture);
+    glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D,maskTexture);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST); glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_R8,256,192,0,GL_RED,GL_UNSIGNED_BYTE,mask.constBits());
+    glActiveTexture(GL_TEXTURE0); glUniform1i(glGetUniformLocation(program,"StudioMask"),1);
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+    draw(base); glUniform1i(glGetUniformLocation(program,"uMasked"),1); draw(overlay);
+    require(pixel(208,140).green()>240 && pixel(169,175).red()>240,"GL polygon alpha must preserve exterior after scaling");
+    QVector<quint32> blue(256*192,0xff0000ff); glTexSubImage3D(GL_TEXTURE_2D_ARRAY,0,0,0,1,256,192,1,GL_BGRA,GL_UNSIGNED_BYTE,blue.constData());
+    glUniform1i(glGetUniformLocation(program,"uMasked"),0); draw(base);
+    glUniform1i(glGetUniformLocation(program,"uMasked"),1); draw(overlay);
+    require(pixel(208,140).blue()>240 && pixel(169,175).red()>240,"Masked GL pixels must remain live");
+    glDisable(GL_BLEND); glDeleteTextures(1,&maskTexture);
+
     glBindFramebuffer(GL_FRAMEBUFFER,0); glUseProgram(0); glBindVertexArray(0);
     glDeleteBuffers(1,&vbo); glDeleteVertexArrays(1,&vao); glDeleteFramebuffers(1,&fbo); glDeleteTextures(1,&output);
     glDeleteProgram(program); glDeleteShader(vs); glDeleteShader(fs);
@@ -121,7 +143,7 @@ int main(int argc, char** argv)
         auto x = window->findChild<QSpinBox*>("StudioX");
         auto width = window->findChild<QSpinBox*>("StudioWidth");
         auto click = [&](const QString& text) {
-            for (auto b : window->findChildren<QPushButton*>()) if (b->text() == text) { b->click(); return; }
+            for (auto b : window->findChildren<QPushButton*>()) if (b->text() == (text=="Add" ? "Add live bottom-screen map to selected scene" : text)) { b->click(); return; }
             throw std::runtime_error("Editor button missing");
         };
         editor->setGame("test-game-a", "Test Game A");
@@ -155,7 +177,7 @@ int main(int argc, char** argv)
         require(x->maximum() == 255, "Inspector bounds incorrect");
         auto actions = window->findChildren<QAction*>();
         QAction* play = nullptr;
-        for (auto a : actions) if (a->text() == "Play mode") play = a;
+        for (auto a : actions) if (a->text() == "Play") play = a;
         require(play, "Play toggle missing");
         docks[0]->hide();
         play->setChecked(true);
@@ -164,6 +186,8 @@ int main(int argc, char** argv)
         play->setChecked(false);
         require(!docks[0]->isVisible() && docks[1]->isVisible(), "Editor mode must restore dock visibility");
         auto toolbar = window->findChild<QToolBar*>("MelonStudio.Toolbar");
+        auto playButton=window->findChild<QWidget*>("StudioPlayButton");
+        require(playButton && std::abs(playButton->geometry().center().x()-toolbar->width()/2)<=1,"Play button must be centered");
         window->toggleFullscreen(); settle();
         require(window->isFullScreen() && !toolbar->isVisible(), "Fullscreen must hide the editor toolbar");
         for (auto d : docks) require(!d->isVisible(), "Fullscreen must hide all editor panels");
@@ -171,13 +195,24 @@ int main(int argc, char** argv)
         window->toggleFullscreen(); settle();
         require(!window->isFullScreen() && toolbar->isVisible() && !docks[0]->isVisible()
             && docks[1]->isVisible(), "Leaving fullscreen must restore editor visibility");
-        play->setChecked(true);
-        window->toggleFullscreen(); settle();
-        require(window->isFullScreen() && !toolbar->isVisible(), "Fullscreen Play mode must hide the toolbar");
-        window->toggleFullscreen(); settle();
-        require(editor->isPlayMode() && toolbar->isVisible(), "Leaving fullscreen must retain Play mode");
-        for (auto d : docks) require(!d->isVisible(), "Play mode must remain free of editor panels");
-        play->setChecked(false);
+        play->setChecked(true); settle();
+        require(window->isFullScreen() && !toolbar->isVisible(),"Play must enter clean fullscreen");
+        auto exit=window->findChild<QPushButton*>("StudioExitPlay");
+        require(exit && !exit->isVisible(),"Exit Play must start hidden");
+        QKeyEvent ordinary(QEvent::KeyPress,Qt::Key_A,Qt::NoModifier);
+        QApplication::sendEvent(window->panel,&ordinary); settle();
+        require(!exit->isVisible(),"Keyboard/controller-style input must not show Exit");
+        QMouseEvent synthesized(QEvent::MouseMove,QPointF(20,20),QPointF(20,20),QPointF(QCursor::pos()+QPoint(3,4)),Qt::NoButton,Qt::NoButton,Qt::NoModifier,Qt::MouseEventSynthesizedByApplication);
+        QApplication::sendEvent(window->panel,&synthesized); settle();
+        require(!exit->isVisible(),"Synthesized mouse events must not show Exit");
+        auto mouseGlobal=QCursor::pos()+QPoint(31,27);
+        QMouseEvent mouse(QEvent::MouseMove,QPointF(20,20),QPointF(mouseGlobal),Qt::NoButton,Qt::NoButton,Qt::NoModifier);
+        QApplication::sendEvent(window->panel,&mouse); settle();
+        require(exit->isVisible(),"Mouse movement must reveal Exit Play"); settle(2150);
+        require(!exit->isVisible(),"Exit Play must hide after idle timeout");
+        QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier), escapeUp(QEvent::KeyRelease,Qt::Key_Escape,Qt::NoModifier);
+        QApplication::sendEvent(window->panel,&escape); QApplication::sendEvent(window->panel,&escapeUp); settle();
+        require(!editor->isPlayMode() && !window->isFullScreen() && toolbar->isVisible(),"Escape must restore editor");
         docks[0]->show();
         settle(220);
         QVector<quint32> top(256 * 192, 0xffff0000), bottom(256 * 192, 0xff0000ff);
@@ -228,11 +263,11 @@ int main(int argc, char** argv)
         require(editor->saveOnClose() && loaded.load(firstPath, error), "Document round-trip failed");
         auto before = loaded.toJson();
         auto invalid = before;
-        auto invalidStates = invalid["states"].toArray();
+        auto invalidStates = invalid["scenes"].toArray();
         auto state = invalidStates[0].toObject();
         auto elements = state["elements"].toArray();
         auto element = elements[0].toObject(); element["width"] = 999;
-        elements[0] = element; state["elements"] = elements; invalidStates[0] = state; invalid["states"] = invalidStates;
+        elements[0] = element; state["elements"] = elements; invalidStates[0] = state; invalid["scenes"] = invalidStates;
         QString badPath = temporary.path() + "/bad.json";
         QFile bad(badPath); require(bad.open(QIODevice::WriteOnly), "Bad fixture write failed");
         bad.write(QJsonDocument(invalid).toJson()); bad.close();
@@ -247,10 +282,43 @@ int main(int argc, char** argv)
         QKeyEvent press(QEvent::KeyPress, Qt::Key_F9, Qt::NoModifier);
         QApplication::sendEvent(window, &press); settle();
         require(!inst->getEmuThread()->isBottomScreenRevealed(), "Inspector typing must not trigger gameplay hotkeys");
+        require(window->tabPosition(Qt::RightDockWidgetArea)==QTabWidget::North,"Dock tabs must be at the top");
+        auto answerName=[&](const QString& name) {
+            QTimer::singleShot(50,[name] { auto dialog=qobject_cast<QInputDialog*>(QApplication::activeModalWidget()); require(dialog,"Expected name dialog"); dialog->setTextValue(name); dialog->accept(); });
+        };
+        auto button=[&](const char* id) { auto b=window->findChild<QPushButton*>(id); require(b,"Profile button missing"); b->click(); };
+        answerName("Custom racing profile"); button("StudioNewProfile");
+        require(states->count()==3 && outline->topLevelItemCount()==0,"New profile must have independent scenes");
+        answerName("Credits custom scene"); button("StudioAddScene");
+        int customRow=states->currentIndex(); require(states->currentText()=="Credits custom scene","Create custom scene");
+        answerName("Renamed credits"); button("StudioRenameScene"); require(states->currentText()=="Renamed credits","Scene rename UI");
+        button("StudioDuplicateScene"); require(states->count()==5,"Scene duplicate UI");
+        button("StudioSceneUp"); require(states->currentIndex()==customRow,"Scene reorder UI");
+        QTimer::singleShot(50,[] { auto box=qobject_cast<QMessageBox*>(QApplication::activeModalWidget()); require(box,"Expected delete dialog"); box->button(QMessageBox::Yes)->click(); });
+        button("StudioDeleteScene"); require(states->count()==4,"Scene delete UI");
+        answerName("Duplicated profile"); button("StudioDuplicateProfile");
+        answerName("Renamed profile"); button("StudioRenameProfile");
+        require(editor->saveOnClose(),"Named profile save");
+        StudioDocument named; require(named.load(editor->configurationPath(),error) && named.gameLabel=="Renamed profile","Named profile persistence");
+        QTimer::singleShot(50,[] { auto box=qobject_cast<QMessageBox*>(QApplication::activeModalWidget()); require(box,"Expected profile delete dialog"); box->button(QMessageBox::Yes)->click(); });
+        button("StudioDeleteProfile");
+        // Vertex tracing uses native source coordinates independent of widget scale.
+        StudioPolygon polygon; polygon.resize(800,600); polygon.image=QImage(256,192,QImage::Format_RGB32); polygon.image.fill(Qt::blue);
+        auto polygonRect=polygon.canvasRect();
+        auto polygonPoint=[&](int x,int y) { return polygonRect.topLeft()+QPoint(x*polygonRect.width()/256,y*polygonRect.height()/192); };
+        auto clickPoint=[&](QPoint p) { drag(&polygon,p,p); };
+        clickPoint(polygonPoint(20,20)); clickPoint(polygonPoint(200,20)); clickPoint(polygonPoint(120,170));
+        require(polygon.valid() && polygon.points.size()==3,"Trace triangle vertices");
+        auto beforeVertex=polygon.points[0]; drag(&polygon,polygonPoint(20,20),polygonPoint(30,30));
+        require(polygon.points[0]!=beforeVertex,"Move polygon vertex");
+        polygon.undo(); require(polygon.points.size()==2 && !polygon.valid(),"Undo polygon point");
+        clickPoint(polygonPoint(120,170)); bool confirmed=false; polygon.confirm=[&] { confirmed=true; };
+        QKeyEvent enter(QEvent::KeyPress,Qt::Key_Return,Qt::NoModifier); QApplication::sendEvent(&polygon,&enter);
+        require(confirmed,"Enter polygon confirmation");
         // The no-ROM test feeds synthetic frames through the real editor mailbox.
         // Pause/capture of a running Mario Kart ROM remains a manual check.
         editor->setGame("mkds-synthetic", "Mario Kart DS synthetic test");
-        auto mario=window->findChild<QCheckBox*>("StudioMarioEnabled");
+        auto mario=window->findChild<QCheckBox*>("StudioSceneToolsEnabled");
         auto automatic=window->findChild<QCheckBox*>("StudioAutomaticRecognition");
         auto refState=window->findChild<QComboBox*>("StudioReferenceState");
         auto references=window->findChild<QListWidget*>("StudioReferences");
@@ -258,8 +326,16 @@ int main(int argc, char** argv)
         auto screens=static_cast<StudioScreensWidget*>(preview);
         auto canvas=window->findChild<QWidget*>("StudioHudCanvas");
         auto hud=static_cast<StudioHudCanvas*>(canvas);
+        // Seed arbitrary user scenes rather than depending on a fixed scene list.
+        StudioDocument seed; seed.gameId="mkds-synthetic"; seed.gameLabel="Mario Kart DS synthetic test";
+        while(seed.sceneCount()<8) seed.addScene(StudioDocument::legacyStateName(seed.sceneCount()));
+        seed.activeState=StudioLegacyRacing; seed.layouts[StudioLegacyRacing]=StudioLayout::Top; seed.sceneToolsEnabled=true;
+        StudioDocument originalSeed; originalSeed.gameId="mkds-synthetic"; require(originalSeed.load(editor->configurationPath(),error),"Read seed ID"); seed.profileId=originalSeed.profileId;
+        require(seed.save(editor->configurationPath(),error),"Seed custom profile");
+        editor->setGame("temporary-profile","Temporary");
+        editor->setGame("mkds-synthetic","Mario Kart DS synthetic test");
         mario->setChecked(true);
-        require(states->count()==5 && states->currentData().toInt()==StudioRacing,"Mario Kart scenes missing");
+        require(states->count()==8 && states->currentData().toInt()==StudioLegacyRacing,"Dynamic scenes missing");
         auto feed=[&](quint32 color,int ms) {
             QVector<quint32> pixels(256*192,color); QElapsedTimer timer; timer.start();
             do { editor->captureScreens(pixels.data(),bottom.data(),true); settle(110); } while(timer.elapsed()<ms);
@@ -270,13 +346,13 @@ int main(int argc, char** argv)
             drag(screens,r.topLeft()+QPoint(r.width()/4,r.height()/4),r.topLeft()+QPoint(r.width()/2,r.height()/2));
             require(references->count()>0,"Region teaching failed");
         };
-        teach(StudioMarioFirst,0xffff0000,0); teach(StudioMarioFirst,0xffffff00,0);
+        teach(StudioLegacyMarioFirst,0xffff0000,0); teach(StudioLegacyMarioFirst,0xffffff00,0);
         require(references->count()==2,"Multiple alternatives missing");
-        teach(StudioRacing,0xff00ff00,0);
+        teach(StudioLegacyRacing,0xff00ff00,0);
         auto threshold=window->findChild<QDoubleSpinBox*>("StudioReferenceThreshold"); threshold->setValue(99);
         auto layout=window->findChild<QComboBox*>("StudioSceneLayout");
-        states->setCurrentIndex(states->findData(StudioMarioFirst)); layout->setCurrentIndex(int(StudioLayout::Bottom));
-        states->setCurrentIndex(states->findData(StudioRacing));
+        states->setCurrentIndex(states->findData(StudioLegacyMarioFirst)); layout->setCurrentIndex(int(StudioLayout::Bottom));
+        states->setCurrentIndex(states->findData(StudioLegacyRacing));
         window->findChild<QPushButton*>("StudioAddLiveMap")->click();
         require(outline->topLevelItemCount()==1,"Live map missing from racing Outliner");
         require(hud->elements[0].screen==1 && hud->elements[0].width==256,"Map must use live bottom screen");
@@ -288,30 +364,38 @@ int main(int argc, char** argv)
         auto destinationBefore=hud->elements[0].destination;
         drag(hud,point(destinationBefore.right()-2,destinationBefore.bottom()-2),point(destinationBefore.right()-15,destinationBefore.bottom()-10));
         require(hud->elements[0].destination.width()<destinationBefore.width(),"HUD canvas resize failed");
+        auto transform=window->panel->studioTransform(); auto viewportBefore=hud->elements[0].destination;
+        QPoint from=transform.map(QPointF(viewportBefore.center())).toPoint();
+        QPoint to=transform.map(QPointF(viewportBefore.center()+QPoint(-10,-8))).toPoint();
+        drag(window->panel,from,to);
+        require(hud->elements[0].destination.x()<viewportBefore.x(),"Gameplay viewport HUD drag failed");
+        auto viewportMoved=hud->elements[0].destination;
+        drag(window->panel,transform.map(QPointF(viewportMoved.bottomRight()-QPoint(2,2))).toPoint(),transform.map(QPointF(viewportMoved.bottomRight()-QPoint(12,10))).toPoint());
+        require(hud->elements[0].destination.width()<viewportMoved.width(),"Gameplay viewport transform handle failed");
         automatic->setChecked(true); feed(0xff00ff00,700);
         require(automatic->isChecked() && debug->text().contains("Active: Racing"),"Automatic racing confirmation failed");
         require(window->panel->minimumSize()==QSize(256,192),"Racing top-screen override failed");
         QMetaObject::invokeMethod(states,"activated",Qt::DirectConnection,Q_ARG(int,states->currentIndex()));
         require(!automatic->isChecked(),"Choosing current scene must manually override detection");
         automatic->setChecked(true); feed(0xff00ff00,700);
-        play->setChecked(true); window->toggleFullscreen(); settle(); feed(0xffff0000,700);
+        play->setChecked(true); settle(); feed(0xffff0000,700);
         require(debug->text().contains("Active: Main menus"),"Recognition must work in fullscreen Play mode");
         feed(0xff0000ff,700);
         require(debug->text().contains("Active: Unknown - fallback layout"),"Unknown must use fallback");
-        window->toggleFullscreen(); play->setChecked(false); settle();
-        states->setCurrentIndex(states->findData(StudioRacing));
+        play->setChecked(false); settle();
+        states->setCurrentIndex(states->findData(StudioLegacyRacing));
         require(!automatic->isChecked() && debug->text().contains("Manual override"),"Scene selection must override detection");
         require(outline->topLevelItemCount()==1,"Scene map was not restored");
         require(editor->saveOnClose(),"Mario profile save failed");
         QString marioPath=editor->configurationPath(); StudioDocument marioDocument; marioDocument.gameId="mkds-synthetic";
-        require(marioDocument.load(marioPath,error) && marioDocument.references[StudioMarioFirst].size()==2
-            && marioDocument.references[StudioRacing][0].threshold==0.99
-            && marioDocument.elements[StudioRacing][0].destination==hud->elements[0].destination,
+        require(marioDocument.load(marioPath,error) && marioDocument.references[StudioLegacyMarioFirst].size()==2
+            && marioDocument.references[StudioLegacyRacing][0].threshold==0.99
+            && marioDocument.elements[StudioLegacyRacing][0].destination==hud->elements[0].destination,
             "References/settings/live layouts failed persistence");
         screens->selecting=true;
         editor->setGame("other-mkds-profile","Other profile");
         require(!screens->selecting && screens->images[0].isNull(),"Switching games must cancel stale region selection");
-        require(!mario->isChecked(),"Mario tools leaked into another game");
+        require(outline->topLevelItemCount()==0,"HUD leaked into another game");
         editor->setGame("mkds-synthetic","Mario Kart DS synthetic test");
         require(mario->isChecked() && outline->topLevelItemCount()==1,"Mario profile reload failed");
         if (qEnvironmentVariableIsSet("MELONSTUDIO_TEST_SCREENSHOT"))
@@ -321,6 +405,34 @@ int main(int argc, char** argv)
             settle(); window->grab().save(qEnvironmentVariable("MELONSTUDIO_TEST_SCREENSHOT")+"-mkds.png");
         }
         std::cout << "Synthetic Mario Kart editor teaching, alternatives, automatic/fullscreen states, unknown fallback, manual override, HUD move/resize, profiles and live GL overlay pixels passed\n";
+        QDockWidget* originalDock=nullptr; QDockWidget* outlinerDock=nullptr;
+        for(auto dock : docks) { if(dock->windowTitle()=="Original DS Screens") originalDock=dock; if(dock->windowTitle()=="Outliner") outlinerDock=dock; }
+        require(originalDock && outlinerDock,"Workspace docks missing");
+        QDockWidget* inspectorDock=nullptr;
+        for(auto dock:docks) if(dock->windowTitle()=="Inspector") inspectorDock=dock;
+        window->resize(1180,850); window->resizeDocks({originalDock,inspectorDock},{330,310},Qt::Horizontal);
+        inspectorDock->raise(); settle(150); int originalWidth=originalDock->width(), inspectorWidth=inspectorDock->width();
+        require(editor->saveOnClose(),"Docked workspace save");
+        deleteAllEmuInstances(); require(createEmuInstance(),"Reopen docked workspace");
+        inst=emuInstances[0]; window=inst->getMainWindow(); editor=window->findChild<StudioEditor*>(); settle(150);
+        docks=window->findChildren<QDockWidget*>(); originalDock=nullptr; outlinerDock=nullptr; inspectorDock=nullptr;
+        for(auto dock:docks) { if(dock->windowTitle()=="Original DS Screens") originalDock=dock; if(dock->windowTitle()=="Outliner") outlinerDock=dock; if(dock->windowTitle()=="Inspector") inspectorDock=dock; }
+        require(!originalDock->isFloating() && std::abs(originalDock->width()-originalWidth)<=2 && std::abs(inspectorDock->width()-inspectorWidth)<=2,
+            "Docked panel widths/splitter proportions must survive reopening");
+        require(window->tabifiedDockWidgets(inspectorDock).size()==3 && !inspectorDock->visibleRegion().isEmpty(),"Tab grouping and active tab persistence");
+        originalDock->setFloating(true); originalDock->resize(370,520); originalDock->move(50,60); outlinerDock->hide();
+        window->resize(1180,850); settle(100); auto savedSize=window->size(), floatingSize=originalDock->size();
+        require(editor->saveOnClose(),"Workspace save failed");
+        deleteAllEmuInstances(); require(createEmuInstance(),"Reopen workspace failed");
+        inst=emuInstances[0]; window=inst->getMainWindow(); editor=window->findChild<StudioEditor*>(); settle(150);
+        docks=window->findChildren<QDockWidget*>(); originalDock=nullptr; outlinerDock=nullptr;
+        for(auto dock:docks) { if(dock->windowTitle()=="Original DS Screens") originalDock=dock; if(dock->windowTitle()=="Outliner") outlinerDock=dock; }
+        std::cerr << "Workspace sizes: " << savedSize.width() << "x" << savedSize.height() << " -> " << window->width() << "x" << window->height()
+            << "; floating " << floatingSize.width() << "x" << floatingSize.height() << " -> " << originalDock->width() << "x" << originalDock->height() << "; visibility " << outlinerDock->isVisible() << "\n";
+        require(window->size()==savedSize && originalDock->isFloating() && originalDock->size()==floatingSize && !outlinerDock->isVisible(),"Saved geometry/floating dock size/visibility must survive reopening");
+        auto floatingBefore=originalDock->geometry(); editor->setGame("workspace-switch","Game switch"); settle();
+        require(originalDock->isFloating() && originalDock->geometry()==floatingBefore,"Changing games must not reset workspace");
+        std::cout << "Named profile/scene operations, polygon tracing/vertices, viewport transforms, top tabs, Play/Escape/mouse timeout and persisted workspace passed\n";
         std::cout << (dsi ? "DSi" : "DS") << ": editor panels, Inspector, ordering, scenes, mode toggle/fullscreen, per-game persistence, validation, software/OpenGL screen previews, input isolation passed\n";
     }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; result = 1; }

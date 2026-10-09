@@ -940,6 +940,7 @@ void MainWindow::setStudioPresentation(const StudioPresentation& p)
 }
 
 void MainWindow::studioPause(bool pause) { onPause(pause); }
+void MainWindow::studioReleaseKeys() { if(emuInstance) emuInstance->keyReleaseAll(); }
 
 void MainWindow::captureStudioScreens(void* top, void* bottom, bool software)
 {
@@ -2194,6 +2195,7 @@ void MainWindow::toggleFullscreen()
 {
     if (!isFullScreen())
     {
+        if(studio) studio->prepareFullscreen();
         showFullScreen();
         if (studio) studio->setFullscreen(true);
         if (hasMenu)
@@ -2205,8 +2207,9 @@ void MainWindow::toggleFullscreen()
         if (studio) studio->setFullscreen(false);
         if (hasMenu)
         {
-            int menuBarHeight = menuBar()->sizeHint().height();
-            menuBar()->setFixedHeight(menuBarHeight);
+            menuBar()->setMinimumHeight(0);
+            menuBar()->setMaximumHeight(QWIDGETSIZE_MAX);
+            menuBar()->updateGeometry();
         }
     }
 }

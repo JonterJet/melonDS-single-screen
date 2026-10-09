@@ -29,11 +29,11 @@ void layouts(QComboBox* combo)
     combo->addItem("Both screens", int(StudioLayout::Both));
 }
 }
-void StudioEditor::initializeMarioControls(QWidget* sceneWidget)
+void StudioEditor::initializeSceneControls(QWidget* sceneWidget)
 {
-    auto sceneOptions = new QHBoxLayout;
-    marioMode = new QCheckBox("Enable Mario Kart DS tools for this game");
-    marioMode->setObjectName("StudioMarioEnabled");
+    auto sceneOptions = new QVBoxLayout;
+    marioMode = new QCheckBox("Enable scene layouts and HUD");
+    marioMode->setObjectName("StudioSceneToolsEnabled");
     automatic = new QCheckBox("Automatic recognition");
     automatic->setObjectName("StudioAutomaticRecognition");
     sceneLayout = new QComboBox; layouts(sceneLayout);
@@ -44,9 +44,8 @@ void StudioEditor::initializeMarioControls(QWidget* sceneWidget)
     connect(marioMode, &QCheckBox::toggled, this, [this](bool value) {
         if (refreshing) return;
         editElement();
-        document.marioEnabled = value; document.automatic = false;
-        document.activeState = value ? StudioRacing : 0;
-        if (value && document.elements[StudioRacing].isEmpty()) document.elements[StudioRacing] = document.elements[0];
+        document.sceneToolsEnabled = value; document.automatic = false;
+
         document.dirty = true; resetRecognition(); refresh();
     });
     connect(automatic, &QCheckBox::toggled, this, [this](bool value) {
@@ -60,8 +59,8 @@ void StudioEditor::initializeMarioControls(QWidget* sceneWidget)
     rules = new QWidget;
     auto form = new QFormLayout(rules);
     refState = new QComboBox; refState->setObjectName("StudioReferenceState");
-    for (int i = StudioMarioFirst; i < StudioStateCount; ++i) refState->addItem(StudioDocument::stateName(i), i);
-    refState->setCurrentIndex(refState->findData(StudioRacing));
+    for (int i = 0; i < document.sceneCount(); ++i) refState->addItem(document.sceneName(i), i);
+
     form->addRow("Teach state", refState);
     refList = new QListWidget; refList->setObjectName("StudioReferences");
     refList->setMaximumHeight(110); form->addRow(refList);
@@ -118,7 +117,8 @@ void StudioEditor::initializeMarioControls(QWidget* sceneWidget)
 
     debug = new QLabel; debug->setObjectName("StudioRecognitionDebug"); debug->setTextFormat(Qt::PlainText);
     debug->setWordWrap(true); debug->setAlignment(Qt::AlignTop);
-    auto debugDock = dock("Recognition Debug", debug, Qt::RightDockWidgetArea);
+    auto debugScroll=new QScrollArea; debugScroll->setWidgetResizable(true); debugScroll->setWidget(debug);
+    auto debugDock = dock("Recognition Debug", debugScroll, Qt::RightDockWidgetArea);
     hudCanvas = new StudioHudCanvas;
     auto hudWidget = new QWidget; auto hudLayout = new QVBoxLayout(hudWidget);
     auto hint = new QLabel("Select an Outliner element. Drag it to move; drag its lower-right corner to resize. The canvas is in original DS pixels; the game viewport renders the overlay live.");
@@ -143,17 +143,22 @@ void StudioEditor::initializeMarioControls(QWidget* sceneWidget)
     };
     static_cast<StudioScreensWidget*>(preview)->selected = [this](int screen, QRect region) { selectedRegion(screen, region); };
 }
-void StudioEditor::refreshMarioControls()
+void StudioEditor::refreshSceneControls()
 {
-    marioMode->setChecked(document.marioEnabled);
+    marioMode->setChecked(document.sceneToolsEnabled);
     marioMode->setEnabled(!document.gameId.startsWith("firmware"));
-    automatic->setChecked(document.automatic); automatic->setEnabled(document.marioEnabled);
-    sceneLayout->setCurrentIndex(int(document.layouts[document.activeState])); sceneLayout->setEnabled(document.marioEnabled);
+    automatic->setChecked(document.automatic); automatic->setEnabled(document.sceneToolsEnabled);
+    sceneLayout->setCurrentIndex(int(document.layouts[document.activeState])); sceneLayout->setEnabled(document.sceneToolsEnabled);
     fallbackLayout->setCurrentIndex(int(document.fallback)); confirmation->setValue(document.confirmationMs);
     margin->setValue(document.ambiguityMargin*100);
-    rules->setEnabled(document.marioEnabled);
+    rules->setEnabled(document.sceneToolsEnabled);
     auto crop = inspector->findChild<QPushButton*>("StudioSelectOverlaySource");
-    if (crop) crop->setEnabled(document.marioEnabled);
+    if (crop) crop->setEnabled(document.sceneToolsEnabled);
+    QString taught=refState->currentData(Qt::UserRole+1).toString();
+    refState->clear();
+    for(int i=0;i<document.sceneCount();++i) { refState->addItem(document.sceneName(i),i); refState->setItemData(i,document.sceneIds[i],Qt::UserRole+1); }
+    int row=refState->findData(taught,Qt::UserRole+1);
+    refState->setCurrentIndex(row>=0 ? row : document.activeState);
     refreshReferences();
 }
 void StudioEditor::refreshReferences()
@@ -203,10 +208,10 @@ void StudioEditor::resetRecognition()
 void StudioEditor::applyPresentation()
 {
     StudioPresentation p;
-    if (document.marioEnabled)
+    if (document.sceneToolsEnabled && document.gameId==currentRom)
     {
         runtimeState = document.automatic ? lastMatch.state : document.activeState;
-        auto layout = runtimeState >= StudioMarioFirst ? document.layouts[runtimeState] : document.fallback;
+        auto layout = runtimeState >= 0 ? document.layouts[runtimeState] : document.fallback;
         switch (layout)
         {
             case StudioLayout::Top: p.sizing = screenSizing_TopOnly; break;
@@ -214,7 +219,10 @@ void StudioEditor::applyPresentation()
             case StudioLayout::Both: p.sizing = screenSizing_Even; break;
             default: break;
         }
-        if (runtimeState >= StudioMarioFirst) p.overlays = document.elements[runtimeState];
+        if (runtimeState >= 0) {
+            p.overlays=document.elements[runtimeState];
+            if(!playMode && !window->isFullScreen()) p.selected=outliner->indexOfTopLevelItem(outliner->currentItem());
+        }
         hudCanvas->primary = p.sizing == screenSizing_BotOnly ? 1 : 0;
     }
     else runtimeState = -2;
@@ -222,14 +230,14 @@ void StudioEditor::applyPresentation()
 }
 void StudioEditor::updateDebug()
 {
-    if (!document.marioEnabled) { debug->setText("Mario Kart DS tools disabled. Existing emulator layout is unchanged."); return; }
+    if (!document.sceneToolsEnabled) { debug->setText("Scene tools disabled. Existing emulator layout is unchanged."); return; }
     QString text = document.automatic ? "Automatic recognition\n" : "Manual override (recognition paused)\n";
-    text += "Active: " + (runtimeState >= StudioMarioFirst ? StudioDocument::stateName(runtimeState) : "Unknown - fallback layout") + "\n";
-    text += "Candidate: " + (lastMatch.ambiguous ? "Ambiguous" : lastMatch.candidate >= 0 ? StudioDocument::stateName(lastMatch.candidate) : "None") + "\n";
+    text += "Active: " + (runtimeState >= 0 ? document.sceneName(runtimeState) : "Unknown - fallback layout") + "\n";
+    text += "Candidate: " + (lastMatch.ambiguous ? "Ambiguous" : lastMatch.candidate >= 0 ? document.sceneName(lastMatch.candidate) : "None") + "\n";
     text += QString("Best similarity: %1% (not probability)\nConfirmation: %2 / %3 ms\n")
         .arg(lastMatch.confidence*100,0,'f',1).arg(lastMatch.pendingMs).arg(document.confirmationMs);
-    for (int i = StudioMarioFirst; i < StudioStateCount; ++i)
-        text += QString("%1: %2%  [%3 references]\n").arg(StudioDocument::stateName(i)).arg(lastMatch.scores[i]*100,0,'f',1).arg(document.references[i].size());
+    for (int i = 0; i < document.sceneCount(); ++i)
+        text += QString("%1: %2%  [%3 references]\n").arg(document.sceneName(i)).arg(lastMatch.scores.value(i)*100,0,'f',1).arg(document.references[i].size());
     if (lastSampleMs < 0 || recognitionClock.elapsed()-lastSampleMs > 500) text += "No fresh recognition frames.\n";
     debug->setText(text);
 }
@@ -247,14 +255,14 @@ void StudioEditor::tickScreens()
         teachingPending = false; screens->selecting = true; preview->update();
         selectionHint->setText("Game paused. Drag a region on either original screen (at least 4x4 DS pixels). Escape cancels; Resume game continues play.");
     }
-    if (document.marioEnabled && document.automatic)
+    if (document.sceneToolsEnabled && document.automatic && document.gameId==currentRom)
     {
         int previousState = lastMatch.state;
         if (fresh && latest[0].size() == QSize(256,192) && latest[1].size() == QSize(256,192))
         { lastSampleMs = now; lastMatch = recognizer.update(latest,document,now); }
         else if (lastSampleMs < 0 || now-lastSampleMs > 500)
         { recognizer.reset(); lastMatch = StudioMatch{}; }
-        if (lastMatch.state >= StudioMarioFirst && lastMatch.state != document.activeState)
+        if (lastMatch.state >= 0 && lastMatch.state != document.activeState)
         {
             editElement();
             if (document.automatic) { document.activeState = lastMatch.state; refresh(); }
@@ -263,16 +271,16 @@ void StudioEditor::tickScreens()
         else updateDebug();
     }
     captureRequested.store(originals->isVisible() || hudCanvas->isVisible() || teachingPending
-        || (document.marioEnabled && document.automatic));
+        || (document.sceneToolsEnabled && document.automatic));
 }
 void StudioEditor::beginSelection(bool overlay)
 {
-    if (!document.marioEnabled) { showError("Enable Mario Kart DS tools for this game's profile first."); return; }
-    if (!window->getEmuInstance()->getEmuThread()->emuIsActive())
-    { showError("Load and start Mario Kart DS before capturing a game region."); return; }
+    if (!document.sceneToolsEnabled) { showError("Enable scene layouts and HUD's profile first."); return; }
+    if (document.gameId!=currentRom || !window->getEmuInstance()->getEmuThread()->emuIsActive())
+    { showError("Load and start the associated game before capturing a game region."); return; }
     if (overlay && outliner->indexOfTopLevelItem(outliner->currentItem()) < 0)
     { showError("Select a HUD element in the Outliner first."); return; }
-    if (!overlay && document.referenceCount() >= 64) { showError("A profile can contain at most 64 references."); return; }
+
     window->studioPause(true); automatic->setChecked(false);
     selectingOverlay = overlay; teachingPending = true;
     static_cast<StudioScreensWidget*>(preview)->selecting = false;
@@ -294,9 +302,9 @@ void StudioEditor::selectedRegion(int screen, const QRect& region)
     }
     else
     {
-        if (document.referenceCount() >= 64) { showError("A profile can contain at most 64 references."); return; }
+
         int state = refState->currentData().toInt();
-        auto name = QString("%1 reference %2").arg(StudioDocument::stateName(state)).arg(document.references[state].size()+1);
+        auto name = QString("%1 reference %2").arg(document.sceneName(state)).arg(document.references[state].size()+1);
         document.references[state].append({name,screen,region,screens->images[screen].copy(region),0.96,true});
         document.dirty = true; resetRecognition(); refreshReferences(); applyPresentation();
     }

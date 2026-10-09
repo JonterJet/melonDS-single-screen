@@ -134,9 +134,16 @@ void ScreenPanel::loadConfig()
     screenAspectBot = cfg.GetInt("ScreenAspectBot");
 }
 
+QTransform ScreenPanel::studioTransform()
+{
+    QMutexLocker lock(&studioMutex);
+    if(numScreens<1 || studioRevealActive) return QTransform(0,0,0,0,0,0);
+    auto m=screenMatrix[0]; return QTransform(m[0],m[1],m[2],m[3],m[4],m[5]);
+}
 void ScreenPanel::setStudioPresentation(const StudioPresentation& p)
 {
-    { QMutexLocker lock(&studioMutex); studioSizing = p.sizing; studioOverlays = p.overlays; }
+    { QMutexLocker lock(&studioMutex); studioSizing=p.sizing; studioOverlays=p.overlays; studioSelected=p.selected;
+      studioMasks.clear(); for(const auto& e : p.overlays) studioMasks.append(e.polygon.isEmpty() ? QImage{} : studioPolygonMask(e)); }
     setMinimumSize(screenGetMinSize(1));
     setupScreenLayout();
     update();
@@ -859,6 +866,8 @@ void ScreenPanelNative::paintEvent(QPaintEvent* event)
         {
             painter.setTransform(screenTrans[0]);
             paintStudioOverlays(painter, screen, studioOverlays);
+            if(studioSelected>=0 && studioSelected<studioOverlays.size() && studioOverlays[studioSelected].enabled)
+                paintStudioSelection(painter,studioOverlays[studioSelected]);
         }
         emuInstance->renderLock.unlock();
     }
@@ -1010,6 +1019,11 @@ void ScreenPanelGL::initOpenGL()
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 5*sizeof(float), reinterpret_cast<void*>(2*sizeof(float)));
 
+    glGenTextures(1,&studioMaskTexture); glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D,studioMaskTexture);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST); glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_R8,256,192,0,GL_RED,GL_UNSIGNED_BYTE,nullptr);
+    glUseProgram(screenShaderProgram); glUniform1i(glGetUniformLocation(screenShaderProgram,"StudioMask"),1);
     glGenTextures(1, &screenTexture);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D_ARRAY, screenTexture);
@@ -1081,6 +1095,7 @@ void ScreenPanelGL::deinitOpenGL()
 
     glDeleteVertexArrays(1, &screenVertexArray);
     glDeleteBuffers(1, &screenVertexBuffer);
+    glDeleteTextures(1,&studioMaskTexture);
     glDeleteVertexArrays(1, &studioVertexArray);
     glDeleteBuffers(1, &studioVertexBuffer);
 
@@ -1212,6 +1227,8 @@ void ScreenPanelGL::drawScreen()
         glBindBuffer(GL_ARRAY_BUFFER, screenVertexBuffer);
         glBindVertexArray(screenVertexArray);
 
+        glUniform1i(glGetUniformLocation(screenShaderProgram,"uMasked"),0);
+        glUniform1i(glGetUniformLocation(screenShaderProgram,"uSelection"),0);
         studioMutex.lock();
         for (int i = 0; i < numScreens; i++)
         {
@@ -1224,12 +1241,32 @@ void ScreenPanelGL::drawScreen()
             glBindVertexArray(studioVertexArray);
             glBindBuffer(GL_ARRAY_BUFFER, studioVertexBuffer);
             glUniformMatrix2x3fv(screenShaderTransformULoc, 1, GL_TRUE, screenMatrix[0]);
-            for (const auto& e : studioOverlays) if (e.enabled)
+            glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+            for (int i=0;i<studioOverlays.size();++i) if (studioOverlays[i].enabled)
             {
+                const auto& e=studioOverlays[i];
+                glUniform1i(glGetUniformLocation(screenShaderProgram,"uMasked"),!e.polygon.isEmpty());
+                if(!studioMasks[i].isNull()) {
+                    glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D,studioMaskTexture);
+                    glTexSubImage2D(GL_TEXTURE_2D,0,0,0,256,192,GL_RED,GL_UNSIGNED_BYTE,studioMasks[i].constBits());
+                    glActiveTexture(GL_TEXTURE0);
+                }
                 auto vertices = studioOverlayVertices(e);
                 glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STREAM_DRAW);
                 glDrawArrays(GL_TRIANGLES, 0, 6);
             }
+            if(studioSelected>=0 && studioSelected<studioOverlays.size() && studioOverlays[studioSelected].enabled) {
+                glUniform1i(glGetUniformLocation(screenShaderProgram,"uMasked"),0);
+                glUniform1i(glGetUniformLocation(screenShaderProgram,"uSelection"),1);
+                const auto& e=studioOverlays[studioSelected]; auto v=studioOverlayVertices(e);
+                float lines[20]; int corners[]={0,1,2,5};
+                for(int i=0;i<4;++i) std::copy_n(v.data()+corners[i]*5,5,lines+i*5);
+                glBufferData(GL_ARRAY_BUFFER,sizeof(lines),lines,GL_STREAM_DRAW); glDrawArrays(GL_LINE_LOOP,0,4);
+                StudioElement handle=e; handle.destination=QRect(e.destination.right()-5,e.destination.bottom()-5,6,6);
+                auto h=studioOverlayVertices(handle); glBufferData(GL_ARRAY_BUFFER,sizeof(h),h.data(),GL_STREAM_DRAW); glDrawArrays(GL_TRIANGLES,0,6);
+                glUniform1i(glGetUniformLocation(screenShaderProgram,"uSelection"),0);
+            }
+            glDisable(GL_BLEND);
         }
         studioMutex.unlock();
         screenSettingsLock.unlock();

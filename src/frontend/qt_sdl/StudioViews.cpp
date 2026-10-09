@@ -98,7 +98,7 @@ void StudioHudCanvas::paintEvent(QPaintEvent*)
             p.fillRect(QRect(dest.x()+dest.width()-6, dest.y()+dest.height()-6,6,6),Qt::yellow);
         }
     }
-    else { p.setPen(Qt::white); p.drawText(QRect(0,0,256,192),Qt::AlignCenter,"Enable Mario Kart DS tools\nto edit live overlays"); }
+    else { p.setPen(Qt::white); p.drawText(QRect(0,0,256,192),Qt::AlignCenter,"Enable scene layouts and HUD\nto edit live overlays"); }
 }
 void StudioHudCanvas::mousePressEvent(QMouseEvent* e)
 {

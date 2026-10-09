@@ -33,6 +33,7 @@ bool StudioProfiles::prefer(const StudioDocument& doc,QString& error)
 {
     QFile existing(root+"/associations.json"); QJsonObject choices;
     if(existing.open(QIODevice::ReadOnly)) choices=QJsonDocument::fromJson(existing.readAll()).object();
+    existing.close(); // Windows cannot atomically replace an open registry file.
     choices[doc.gameId]=doc.profileId;
     QSaveFile file(root+"/associations.json"); auto bytes=QJsonDocument(choices).toJson();
     if(!file.open(QIODevice::WriteOnly) || file.write(bytes)!=bytes.size() || !file.commit()) { error=file.errorString(); return false; }
@@ -47,6 +48,7 @@ bool StudioProfiles::forRom(const QString& rom,const QString& label,const QStrin
 {
     QFile choices(root+"/associations.json"); QString preferred;
     if(choices.open(QIODevice::ReadOnly)) preferred=QJsonDocument::fromJson(choices.readAll()).object()[rom].toString();
+    choices.close(); // Release the read handle before prefer() can rewrite it.
     auto catalog=list();
     for(const auto& p : catalog) if(p.rom==rom && p.id==preferred) return load(p.id,doc,error);
     for(const auto& p : catalog) if(p.rom==rom) return load(p.id,doc,error) && prefer(doc,error);

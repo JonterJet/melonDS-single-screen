@@ -65,7 +65,18 @@ jobs:
     # Synthetic QCoreApplication tests only; never launch melonDS.exe in CI.
     - name: Test synthetic recognition and profiles (15 second limit)
       if: ${{ always() && steps.build.outcome == 'success' }}
-      run: ctest --test-dir build/release-windows-${{ matrix.arch.name }} --output-on-failure --timeout 15
+      run: |
+        $PSNativeCommandUseErrorActionPreference = $false
+        ctest --test-dir build/release-windows-${{ matrix.arch.name }} --output-on-failure --timeout 15
+        $testExit = $LASTEXITCODE
+        if ($testExit -ne 0) {
+          $testLog = "build/release-windows-${{ matrix.arch.name }}/Testing/Temporary/LastTest.log"
+          if (Test-Path $testLog) {
+            $details = (Get-Content $testLog -Raw).Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Synthetic recognition/profile test failed::$details"
+          }
+        }
+        exit $testExit
     - name: Save vcpkg cache
       if: ${{ always() && steps.build.outcome == 'success' }}
       continue-on-error: true

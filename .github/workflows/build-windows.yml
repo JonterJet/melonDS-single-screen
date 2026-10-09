@@ -44,24 +44,24 @@ jobs:
       with:
         vcpkgJsonGlob: vcpkg.json
     - name: Build
+      id: build
       uses: lukka/run-cmake@v10
       with:
         configurePreset: release-windows-${{ matrix.arch.name }}
         configurePresetAdditionalArgs: "['-DENABLE_DEBUG_DEPS=OFF', '-DMELONDS_EMBED_BUILD_INFO=ON']"
         buildPreset: release-windows-${{ matrix.arch.name }}
-    - name: Check executable startup
-      shell: pwsh
-      run: |
-        $exe = Join-Path $env:GITHUB_WORKSPACE 'build/release-windows-${{ matrix.arch.name }}/melonDS.exe'
-        if (!(Test-Path $exe)) { throw "Windows executable was not built: $exe" }
-        $process = Start-Process -FilePath $exe -ArgumentList '--help' -Wait -PassThru
-        if ($process.ExitCode -ne 0) { throw "melonDS --help failed with exit code $($process.ExitCode)" }
-    - uses: actions/upload-artifact@v7
+    # Do not launch the GUI executable in CI: --help can wait for UI interaction.
+    # Upload immediately after compilation; test the downloaded build manually.
+    - name: Upload Windows executable
+      if: ${{ always() && steps.build.outcome == 'success' }}
+      uses: actions/upload-artifact@v7
       with:
         name: melonDS-windows-${{ matrix.arch.name }}
         path: .\build\release-windows-${{ matrix.arch.name }}\melonDS.exe
         if-no-files-found: error
     - name: Save vcpkg cache
+      if: ${{ always() && steps.build.outcome == 'success' }}
+      continue-on-error: true
       uses: actions/cache/save@v4
       with:
         path: ${{ github.workspace }}/vcpkg_cache

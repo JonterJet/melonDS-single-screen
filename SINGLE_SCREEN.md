@@ -45,7 +45,7 @@ The Linux binary `build/cloud/melonDS` is not a Windows executable. Windows comp
 
 Commit these changes and push them to this repository's `master` branch or a branch whose name starts with `ci/` (or open a pull request targeting `master`). With Actions enabled, the existing `.github/workflows/build-windows.yml` builds the Windows presets using vcpkg/static dependencies. Once its **Windows / x86_64** job succeeds, download the **melonDS-windows-x86_64** artifact from that workflow run and extract `melonDS.exe`. Use the ARM64 artifact only for ARM64 Windows. An artifact from an older commit will not contain this change.
 
-The workflow checks that the executable starts successfully with `--help` before uploading it, and fails if the executable is missing. Its Windows presets statically link the dependency libraries; this artifact is intended to run without the DLL bundle required by the MSYS2 dynamic build below. Check the actual workflow result before treating the Windows build as verified.
+The workflow uploads immediately after compilation and fails if the executable is missing. Automated GUI startup testing is temporarily disabled because `--help` can wait for UI interaction on Windows; test the downloaded build manually. The vcpkg cache save still runs after a successful build if artifact upload or later verification fails. Its Windows presets statically link the dependency libraries; this artifact is intended to run without the DLL bundle required by the MSYS2 dynamic build below. Check the actual workflow result before treating Windows compilation as verified.
 
 ### Build locally with MSYS2 UCRT64
 

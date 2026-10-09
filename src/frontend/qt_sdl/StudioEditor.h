@@ -138,7 +138,7 @@ private:
     void updateDebug();
 
     QDockWidget* dock(const QString& title, QWidget* content, int area);
-    void refresh(int selected = -1);
+    void refresh(int selected = -1, bool hierarchy = true);
     void selectElement();
     void editElement();
     void setPlayMode(bool play);

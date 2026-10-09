@@ -215,7 +215,7 @@ void StudioEditor::applyPresentation()
         }
         if (runtimeState >= 0) {
             p.overlays=document.elements[runtimeState];
-            if(!playMode && !window->isFullScreen() && runtimeState==document.activeState) p.selected=outliner->indexOfTopLevelItem(outliner->currentItem());
+            if(!playMode && !window->isFullScreen() && !profileSelected && runtimeState==document.activeState) p.selected=outliner->indexOfTopLevelItem(outliner->currentItem());
         }
         hudCanvas->primary = p.sizing == screenSizing_BotOnly ? 1 : 0;
     }

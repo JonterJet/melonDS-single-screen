@@ -277,7 +277,7 @@ void StudioEditor::setGame(const QString& id,const QString& label)
     document=std::move(candidate); profileSelected=false; clearScreens(); refresh();
 }
 
-void StudioEditor::refresh(int selected)
+void StudioEditor::refresh(int selected, bool hierarchy)
 {
     teachingPending = selectingOverlay = false;
     static_cast<StudioScreensWidget*>(preview)->selecting = false;
@@ -296,7 +296,7 @@ void StudioEditor::refresh(int selected)
         outliner->setCurrentItem(outliner->topLevelItem(qBound(0, selected, outliner->topLevelItemCount() - 1)));
     profile->setText("  " + document.gameLabel + (document.dirty ? " *" : ""));
     profile->setToolTip(configurationPath());
-    refreshProfiles();
+    if(hierarchy) refreshProfiles();
     refreshSceneControls();
     refreshing = false;
     selectElement();

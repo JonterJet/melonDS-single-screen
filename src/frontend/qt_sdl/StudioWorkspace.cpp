@@ -193,7 +193,10 @@ void StudioEditor::chooseProfile(const QString& id,int scene)
         clearScreens();
     } else { editElement(); editReference(); }
     if(scene>=0 && scene<document.sceneCount()) document.activeState=scene;
-    document.dirty=true; refresh();
+    // Keep tree items/indexes alive during mouse selection so a press can become
+    // a drag or double-click edit. Rebuild the hierarchy only after mutations.
+    if(auto item=profileTree->currentItem()) { if(item->parent()) item->parent()->setExpanded(true); else item->setExpanded(true); }
+    document.dirty=true; refresh(-1,false);
 }
 static QString workspacePath()
 {

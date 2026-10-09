@@ -194,10 +194,12 @@ build/layout-test
 
 The integration runner requires a Linux Ninja development build without LTO,
 exported compile commands, Qt/SDL, GNU objcopy and an X session or xvfb-run.
+The editor suite also requires libX11 and libXtst/XTest for real drag gestures.
 `--build-only` prepares the integration binary outside the virtual X session.
 
 Coverage includes profile/scene/widget inline creation and renaming, cancellation,
-context-menu copy/paste/duplicate/delete/hide, persisted sibling ordering,
+context-menu copy/paste/duplicate/delete/hide, real X11 drag/drop gestures and
+persisted sibling ordering,
 editing/runtime scene isolation, asset-free DS thread Pause/Play/Reset,
 reordering, dynamic recognition, v1/v2 migration, PNG/profile round trips, polygon
 alpha generation, native/production-GL live mask pixels and scaling, vertex

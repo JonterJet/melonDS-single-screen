@@ -35,7 +35,7 @@ are unchanged. This document records completed work and unfinished milestones.
 ## Validation
 
 Synthetic Qt integration tests exercise actual hierarchy selection, inline
-editors (including cancellation/double-click), menus, ordering handlers and
+editors (including cancellation/double-click), menus, real X11 drag gestures and
 on-disk persistence, live software/OpenGL overlays, runtime/editing separation,
 Play/Escape/cursor timeout and real docked/floating workspace restoration.
 An asset-free DS console exercises the real thread's Pause/Resume/Reset controls.

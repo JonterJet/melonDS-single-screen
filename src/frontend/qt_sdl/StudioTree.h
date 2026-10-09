@@ -5,6 +5,8 @@
 #include <QDropEvent>
 #include <QTimer>
 #include <QSignalBlocker>
+#include <QDrag>
+#include <QMimeData>
 #include <functional>
 
 // Reordering keeps object ownership intact: scenes stay in their profile and
@@ -36,6 +38,15 @@ public:
         return true;
     }
 protected:
+    void startDrag(Qt::DropActions) override
+    {
+        if(!currentItem()) return;
+        // We perform the sibling move ourselves. The base implementation would
+        // remove the selected row again after exec() returns MoveAction.
+        QDrag drag(this); drag.setMimeData(model()->mimeData(selectedIndexes()));
+        drag.setPixmap(viewport()->grab(visualItemRect(currentItem())));
+        drag.exec(Qt::MoveAction,Qt::MoveAction);
+    }
     void dropEvent(QDropEvent* event) override
     {
         if(event->source()!=this) { event->ignore(); return; }

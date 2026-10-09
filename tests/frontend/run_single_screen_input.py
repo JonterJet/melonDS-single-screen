@@ -3,6 +3,7 @@
 
 Usage: python3 tests/frontend/run_single_screen_input.py build/cloud
 Add --studio to run the basic editor integration suite.
+The editor suite uses libX11/libXtst for actual platform drag/drop gestures.
 Requires compile_commands.json, GNU objcopy, Qt/SDL runtime libraries, and an X
 session (or xvfb-run). Reuses production objects; source files are not modified.
 """

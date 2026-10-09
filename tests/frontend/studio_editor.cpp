@@ -32,6 +32,7 @@ extern const char* kScreenFS;
 #include <QMenu>
 #include <QToolButton>
 #include <QStackedWidget>
+#include <QLibrary>
 #include "StudioTree.h"
 #include <iostream>
 #include <stdexcept>
@@ -106,6 +107,31 @@ static void checkGlOverlay(GLuint texture)
     glBindFramebuffer(GL_FRAMEBUFFER,0); glUseProgram(0); glBindVertexArray(0);
     glDeleteBuffers(1,&vbo); glDeleteVertexArrays(1,&vao); glDeleteFramebuffers(1,&fbo); glDeleteTextures(1,&output);
     glDeleteProgram(program); glDeleteShader(vs); glDeleteShader(fs);
+}
+// An actual X11 drag reaches QDrag::exec and its platform drop lifecycle. Sending
+// QWidget mouse events alone does not exercise Qt's source-side drag cleanup.
+static void dragTreeGesture(QTreeWidget* tree,QTreeWidgetItem* source,QTreeWidgetItem* target)
+{
+    QLibrary x11("libX11.so.6"), xtst("libXtst.so.6");
+    auto open=reinterpret_cast<void*(*)(const char*)>(x11.resolve("XOpenDisplay"));
+    auto close=reinterpret_cast<int(*)(void*)>(x11.resolve("XCloseDisplay"));
+    auto flush=reinterpret_cast<int(*)(void*)>(x11.resolve("XFlush"));
+    auto motion=reinterpret_cast<int(*)(void*,int,int,int,unsigned long)>(xtst.resolve("XTestFakeMotionEvent"));
+    auto button=reinterpret_cast<int(*)(void*,unsigned int,int,unsigned long)>(xtst.resolve("XTestFakeButtonEvent"));
+    require(open && close && flush && motion && button,"X11/XTest required for real drag gesture test");
+    auto display=open(nullptr); require(display,"Open X display for drag");
+    tree->setCurrentItem(source); tree->scrollToItem(source); settle();
+    if(!tree->viewport()->rect().contains(tree->visualItemRect(target).center())) { tree->scrollToItem(target); settle(); }
+    require(tree->viewport()->rect().contains(tree->visualItemRect(source).center()) && tree->viewport()->rect().contains(tree->visualItemRect(target).center()),"Both drag items must be visible");
+    QPoint from=tree->viewport()->mapToGlobal(tree->visualItemRect(source).center());
+    auto targetRect=tree->visualItemRect(target); QPoint to=tree->viewport()->mapToGlobal(QPoint(targetRect.center().x(),targetRect.top()+1));
+    motion(display,-1,from.x(),from.y(),0); flush(display); settle(30);
+    button(display,1,1,0); flush(display); settle(30);
+    // A queued move/release runs even inside QDrag's nested event loop.
+    QTimer::singleShot(80,[=] { motion(display,-1,to.x(),to.y(),0); flush(display); });
+    QTimer::singleShot(250,[=] { button(display,1,0,0); flush(display); });
+    motion(display,-1,from.x()+20,from.y()+5,0); flush(display); settle(400);
+    close(display);
 }
 static void drag(QWidget* widget, QPoint from, QPoint to)
 {
@@ -357,18 +383,23 @@ int main(int argc, char** argv)
         require(widgetAfter.elements[0][0].id==originalWidgetId && widgetAfter.elements[0][1].id!=originalWidgetId && widgetAfter.elements[0][2].id!=widgetAfter.elements[0][1].id,"Widget copies must have independent IDs");
         require(!widgetAfter.elements[0][2].enabled,"Hide widget must persist without stale Inspector overwrites");
         auto widgets=static_cast<StudioTree*>(outline); auto lastId=outline->topLevelItem(2)->data(0,Qt::UserRole).toString();
-        require(widgets->moveRelative(outline->topLevelItem(2),outline->topLevelItem(0),true),"Widget drag ordering handler"); settle();
+        dragTreeGesture(outline,outline->topLevelItem(2),outline->topLevelItem(0));
+        require(outline->topLevelItemCount()==3,"Real widget drag must not delete the moved item");
         require(outline->topLevelItem(0)->data(0,Qt::UserRole).toString()==lastId,"Widget drag order UI refresh");
         require(widgetAfter.load(editor->configurationPath(),error) && widgetAfter.elements[0][0].id==lastId,"Widget drag order must persist");
         contextMenu(outline,"Delete"); require(outline->topLevelItemCount()==2,"Widget menu deletion");
         auto profilesTree=static_cast<StudioTree*>(tree); auto sceneRoot=tree->currentItem()->parent();
         auto sceneLastId=sceneRoot->child(sceneRoot->childCount()-1)->data(0,Qt::UserRole+2).toString();
         require(!profilesTree->moveRelative(sceneRoot->child(0),tree->topLevelItem(0),true),"Drag must reject cross-profile ownership changes");
-        require(profilesTree->moveRelative(sceneRoot->child(sceneRoot->childCount()-1),sceneRoot->child(0),true),"Scene drag ordering handler"); settle();
+        dragTreeGesture(tree,sceneRoot->child(sceneRoot->childCount()-1),sceneRoot->child(0));
+        require(states->count()==3,"Real scene drag must not delete the moved scene");
         require(named.load(editor->configurationPath(),error) && named.sceneIds[0]==sceneLastId,"Scene drag ordering must preserve identities and persist");
         tree->setCurrentItem(tree->currentItem()->parent()); settle();
         auto profileId=tree->currentItem()->data(0,Qt::UserRole).toString();
-        if(tree->currentItem()!=tree->topLevelItem(0)) { require(profilesTree->moveRelative(tree->currentItem(),tree->topLevelItem(0),true),"Profile drag handler"); settle(); }
+        if(tree->currentItem()!=tree->topLevelItem(0)) {
+            int count=tree->topLevelItemCount(); dragTreeGesture(tree,tree->currentItem(),tree->topLevelItem(0));
+            require(tree->topLevelItemCount()==count,"Real profile drag must not remove the source profile");
+        }
         StudioProfiles orderedStore(QFileInfo(editor->configurationPath()).absolutePath());
         require(orderedStore.list().first().id==profileId,"Profile drag order persistence");
         // Vertex tracing uses native source coordinates independent of widget scale.
@@ -527,7 +558,7 @@ int main(int argc, char** argv)
             require(editor->configurationPath()==preservedPath && preserved.load(preservedPath,error) && preserved.toJson()==preservedJson,"Reset must preserve profiles");
             thread->emuStop(true); settle();
         }
-        std::cout << "Inline profile/scene/widget naming, copy/paste/duplicate/menu operations, drag handlers, editing/runtime isolation, transport controls and workspace persistence passed\n";
+        std::cout << "Inline profile/scene/widget naming, copy/paste/duplicate/menu operations, real drag gestures, editing/runtime isolation, transport controls and workspace persistence passed\n";
         std::cout << (dsi ? "DSi" : "DS") << ": editor panels, Inspector, ordering, scenes, mode toggle/fullscreen, per-game persistence, validation, software/OpenGL screen previews, input isolation passed\n";
     }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; result = 1; }

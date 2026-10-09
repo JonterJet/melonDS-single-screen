@@ -282,9 +282,10 @@ void StudioEditor::beginSelection(bool overlay)
 }
 void StudioEditor::selectedRegion(int screen, const QRect& region)
 {
+    const bool overlay = selectingOverlay;
     auto screens = static_cast<StudioScreensWidget*>(preview);
     if (screen < 0 || screen > 1 || screens->images[screen].isNull() || !screens->images[screen].rect().contains(region)) return;
-    if (selectingOverlay)
+    if (overlay)
     {
         int row = outliner->indexOfTopLevelItem(outliner->currentItem()); if (row < 0) return;
         auto& e = document.elements[document.activeState][row];
@@ -300,6 +301,6 @@ void StudioEditor::selectedRegion(int screen, const QRect& region)
         document.dirty = true; resetRecognition(); refreshReferences(); applyPresentation();
     }
     teachingPending = false;
-    selectionHint->setText(selectingOverlay ? "HUD source updated. Use HUD Layout to position and resize it." : "Reference saved in this game's profile. Adjust its threshold; capture alternatives as needed.");
+    selectionHint->setText(overlay ? "HUD source updated. Use HUD Layout to position and resize it." : "Reference saved in this game's profile. Adjust its threshold; capture alternatives as needed.");
     profile->setText("  " + document.gameLabel + " *");
 }

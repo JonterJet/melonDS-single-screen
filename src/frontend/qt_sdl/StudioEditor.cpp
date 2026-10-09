@@ -248,6 +248,8 @@ void StudioEditor::setGame(const QString& id, const QString& label)
 
 void StudioEditor::refresh(int selected)
 {
+    teachingPending = selectingOverlay = false;
+    static_cast<StudioScreensWidget*>(preview)->selecting = false;
     refreshing = true;
     states->clear();
     int first = document.marioEnabled ? StudioMarioFirst : 0;
@@ -389,6 +391,11 @@ bool StudioEditor::ownsFocus() const
 
 void StudioEditor::clearScreens()
 {
+    teachingPending = selectingOverlay = false;
+    auto screens = static_cast<StudioScreensWidget*>(preview);
+    screens->selecting = false;
+    screens->images[0] = screens->images[1] = QImage();
+    preview->update();
     QMutexLocker lock(&imageMutex);
     images[0] = QImage(); images[1] = QImage();
     ++imageSerial;

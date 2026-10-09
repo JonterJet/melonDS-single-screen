@@ -308,7 +308,9 @@ int main(int argc, char** argv)
             && marioDocument.references[StudioRacing][0].threshold==0.99
             && marioDocument.elements[StudioRacing][0].destination==hud->elements[0].destination,
             "References/settings/live layouts failed persistence");
+        screens->selecting=true;
         editor->setGame("other-mkds-profile","Other profile");
+        require(!screens->selecting && screens->images[0].isNull(),"Switching games must cancel stale region selection");
         require(!mario->isChecked(),"Mario tools leaked into another game");
         editor->setGame("mkds-synthetic","Mario Kart DS synthetic test");
         require(mario->isChecked() && outline->topLevelItemCount()==1,"Mario profile reload failed");

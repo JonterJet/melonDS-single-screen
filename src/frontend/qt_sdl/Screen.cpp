@@ -31,6 +31,7 @@
 
 #include "main.h"
 #include "EmuInstance.h"
+#include "EmuThread.h"
 
 #include "NDS.h"
 #include "GPU.h"
@@ -74,6 +75,7 @@ ScreenPanel::ScreenPanel(QWidget* parent) : QWidget(parent)
     }
 
     emuInstance = mainWindow->getEmuInstance();
+    bottomScreenRevealed = emuInstance->getEmuThread()->isBottomScreenRevealed();
 
     mouseHide = false;
     mouseHideDelay = 0;
@@ -151,6 +153,14 @@ void ScreenPanel::setupScreenLayout()
 
     int sizing = screenSizing;
     if (sizing == screenSizing_Auto) sizing = autoScreenSizing;
+    if (sizing == screenSizing_TopOnly && bottomScreenRevealed)
+        sizing = screenSizing_BotOnly;
+
+    if (sizing == screenSizing_TopOnly && touching)
+    {
+        touching = false;
+        emuInstance->releaseScreen();
+    }
 
     float aspectTop, aspectBot;
 
@@ -242,6 +252,16 @@ void ScreenPanel::onAutoScreenSizingChanged(int sizing)
     if (screenSizing != screenSizing_Auto) return;
 
     setupScreenLayout();
+}
+
+void ScreenPanel::onBottomScreenRevealChanged(bool revealed)
+{
+    bottomScreenRevealed = revealed;
+    if (screenSizing != screenSizing_TopOnly) return;
+
+    // Do not change the persisted sizing or resize the window while held.
+    setupScreenLayout();
+    update();
 }
 
 void ScreenPanel::resizeEvent(QResizeEvent* event)

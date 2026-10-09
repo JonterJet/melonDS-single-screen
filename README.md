@@ -19,6 +19,8 @@ The goal is to do things right and fast, akin to blargSNES (but hopefully better
 
 ## How to use
 
+For top-screen-only play with a configurable hold-to-reveal bottom-screen control, see [Single-screen controls](./SINGLE_SCREEN.md).
+
 Firmware boot (not direct boot) requires a BIOS/firmware dump from an original DS or DS Lite.
 DS firmwares dumped from a DSi or 3DS aren't bootable and only contain configuration data, thus they are only suitable when booting games directly.
 

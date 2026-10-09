@@ -129,6 +129,7 @@ public:
 
     bool emuIsRunning();
     bool emuIsActive();
+    bool isBottomScreenRevealed() const { return bottomScreenRevealed.load(); }
 
     void initContext(int win);
     void deinitContext(int win);
@@ -152,6 +153,7 @@ signals:
     void windowLimitFPSChange();
 
     void autoScreenSizingChange(int sizing);
+    void bottomScreenRevealChange(bool revealed);
 
     void windowFullscreenToggle();
 
@@ -177,6 +179,7 @@ private:
     EmuStatusKind prevEmuStatus;
     EmuStatusKind emuStatus;
     bool emuActive;
+    std::atomic<bool> bottomScreenRevealed{false};
 
     constexpr static int emuPauseStackRunning = 0;
     constexpr static int emuPauseStackPauseThreshold = 1;

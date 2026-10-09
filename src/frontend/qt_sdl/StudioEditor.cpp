@@ -2,6 +2,7 @@
 #include "Window.h" // OpenGL declarations must precede Qt headers.
 #include "StudioEditor.h"
 #include "EmuInstance.h"
+#include "StudioViews.h"
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -15,6 +16,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QScrollArea>
 #include <QStandardPaths>
 #include <QFileInfo>
 #include <QTimer>
@@ -22,39 +24,6 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <cstring>
-
-namespace
-{
-class OriginalScreens : public QWidget
-{
-public:
-    QImage images[2];
-    explicit OriginalScreens(QWidget* parent = nullptr) : QWidget(parent)
-    {
-        setMinimumSize(160, 270);
-        setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
-        setToolTip("Live original screens. Use the central viewport for game and touchscreen input.");
-    }
-    void paintEvent(QPaintEvent*) override
-    {
-        QPainter painter(this);
-        painter.fillRect(rect(), QColor(20, 22, 26));
-        for (int i = 0; i < 2; ++i)
-        {
-            QRect cell(8, i * height() / 2 + 8, width() - 16, height() / 2 - 16);
-            painter.setPen(Qt::white);
-            painter.drawText(cell, Qt::AlignTop | Qt::AlignHCenter, i == 0 ? "Top screen" : "Bottom screen");
-            cell.adjust(0, 24, 0, 0);
-            QSize size(256, 192);
-            size.scale(cell.size(), Qt::KeepAspectRatio);
-            QRect target(QPoint(cell.center().x() - size.width() / 2, cell.center().y() - size.height() / 2), size);
-            painter.fillRect(target, Qt::black);
-            if (!images[i].isNull()) painter.drawImage(target, images[i]);
-            else painter.drawText(target, Qt::AlignCenter, "No game frame");
-        }
-    }
-};
-}
 
 QDockWidget* StudioEditor::dock(const QString& title, QWidget* content, int area)
 {
@@ -88,7 +57,7 @@ StudioEditor::StudioEditor(MainWindow* window) : QObject(window), window(window)
     profile->setTextFormat(Qt::PlainText);
     toolbar->addWidget(profile);
 
-    preview = new OriginalScreens;
+    preview = new StudioScreensWidget;
     originals = dock("Original DS Screens", preview, Qt::LeftDockWidgetArea);
 
     auto outlineWidget = new QWidget;
@@ -154,10 +123,24 @@ StudioEditor::StudioEditor(MainWindow* window) : QObject(window), window(window)
         connect(bounds[i], &QSpinBox::valueChanged, this, &StudioEditor::editElement);
     }
     form->addRow(enabled);
-    auto note = new QLabel("Layout metadata only. HUD compositing and touch mappings are coming in a later milestone.");
+    const QStringList destLabels{"Overlay X", "Overlay Y", "Overlay width", "Overlay height"};
+    for (int i = 0; i < 4; ++i)
+    {
+        destination[i] = new QSpinBox;
+        destination[i]->setObjectName(QString("StudioDestination%1").arg(i));
+        destination[i]->setRange(i < 2 ? 0 : 1, i % 2 == 0 ? (i == 0 ? 255 : 256) : (i == 1 ? 191 : 192));
+        form->addRow(destLabels[i] + " (DS pixels)", destination[i]);
+        connect(destination[i], &QSpinBox::valueChanged, this, &StudioEditor::editElement);
+    }
+    auto cropButton = new QPushButton("Pause & select HUD source");
+    cropButton->setObjectName("StudioSelectOverlaySource");
+    form->addRow(cropButton);
+    connect(cropButton, &QPushButton::clicked, this, [this] { beginSelection(true); });
+    auto note = new QLabel("Live rectangular overlays are enabled for Mario Kart DS profiles. Drag and resize in HUD Layout. Freeform masks and touch mappings are not implemented.");
     note->setWordWrap(true);
     form->addRow(note);
-    dock("Inspector", inspector, Qt::RightDockWidgetArea);
+    auto inspectorScroll = new QScrollArea; inspectorScroll->setWidgetResizable(true); inspectorScroll->setWidget(inspector);
+    dock("Inspector", inspectorScroll, Qt::RightDockWidgetArea);
     connect(name, &QLineEdit::editingFinished, this, &StudioEditor::editElement);
     connect(source, &QComboBox::currentIndexChanged, this, &StudioEditor::editElement);
     connect(enabled, &QCheckBox::toggled, this, &StudioEditor::editElement);
@@ -166,32 +149,42 @@ StudioEditor::StudioEditor(MainWindow* window) : QObject(window), window(window)
     auto sceneLayout = new QVBoxLayout(sceneWidget);
     states = new QComboBox;
     states->setObjectName("StudioSceneStates");
-    for (int i = 0; i < 3; ++i) states->addItem(StudioDocument::stateName(i));
+    for (int i = 0; i < 3; ++i) states->addItem(StudioDocument::stateName(i), i);
     sceneLayout->addWidget(states);
-    auto stateNote = new QLabel("Switch the editor scene manually. Each scene has its own HUD element list.");
+    auto stateNote = new QLabel("Select a scene for manual override. Enable automatic recognition to resume detection.");
     stateNote->setWordWrap(true);
     sceneLayout->addWidget(stateNote);
     dock("Scene States", sceneWidget, Qt::BottomDockWidgetArea);
     connect(states, &QComboBox::currentIndexChanged, this, [this](int index) {
         if (refreshing) return;
-        document.activeState = index;
+        editElement();
+        document.activeState = states->itemData(index).toInt();
+        if (document.automatic)
+        {
+            document.automatic = false;
+            refreshing = true; automatic->setChecked(false); refreshing = false;
+        }
+        resetRecognition();
         document.dirty = true;
         refresh();
     });
+    // Choosing the already-detected row is also an explicit manual override.
+    connect(states, &QComboBox::activated, this, [this](int index) {
+        if (refreshing || !document.automatic) return;
+        automatic->setChecked(false);
+        document.activeState = states->itemData(index).toInt();
+        document.dirty = true; refresh();
+    });
+    initializeMarioControls(sceneWidget);
     menu->addSeparator();
     for (auto d : docks) menu->addAction(d->toggleViewAction());
     window->setDockNestingEnabled(true);
     window->resize(qMax(window->width(), 1100), qMax(window->height(), 720));
 
+    recognitionClock.start();
     auto timer = new QTimer(this);
-    timer->setInterval(200); // Latest-frame mailbox: bounded memory, no per-frame GUI event queue.
-    connect(timer, &QTimer::timeout, this, [this] {
-        if (!originals->isVisible()) return;
-        auto screens = static_cast<OriginalScreens*>(preview);
-        { QMutexLocker lock(&imageMutex); screens->images[0] = images[0]; screens->images[1] = images[1]; }
-        preview->update();
-        captureRequested.store(true);
-    });
+    timer->setInterval(100); // Bounded latest-frame mailbox; recognition continues in Play/fullscreen.
+    connect(timer, &QTimer::timeout, this, &StudioEditor::tickScreens);
     timer->start();
     setGame(window->getEmuInstance()->getConsoleType() == 1 ? "firmware-dsi" : "firmware-ds", "Firmware / no cartridge");
 }
@@ -210,6 +203,7 @@ void StudioEditor::showError(const QString& error)
 bool StudioEditor::save()
 {
     editElement();
+    editReference();
     QString error;
     if (!document.save(configurationPath(), error)) { showError(error); return false; }
     profile->setText("  " + document.gameLabel);
@@ -220,6 +214,7 @@ bool StudioEditor::save()
 bool StudioEditor::saveOnClose()
 {
     editElement();
+    editReference();
     return !document.dirty || save();
 }
 
@@ -231,6 +226,7 @@ void StudioEditor::load()
         QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) return;
     QString error;
     if (!document.load(configurationPath(), error)) { showError(error); return; }
+    resetRecognition();
     refresh();
 }
 
@@ -246,14 +242,19 @@ void StudioEditor::setGame(const QString& id, const QString& label)
         QString error;
         if (!document.load(configurationPath(), error)) showError(error + "\nThe file was left unchanged.");
     }
-    { QMutexLocker lock(&imageMutex); images[0] = QImage(); images[1] = QImage(); }
+    clearScreens();
     refresh();
 }
 
 void StudioEditor::refresh(int selected)
 {
     refreshing = true;
-    states->setCurrentIndex(document.activeState);
+    states->clear();
+    int first = document.marioEnabled ? StudioMarioFirst : 0;
+    int end = document.marioEnabled ? StudioStateCount : 3;
+    if (document.activeState < first || document.activeState >= end) document.activeState = first;
+    for (int i = first; i < end; ++i) states->addItem(StudioDocument::stateName(i), i);
+    states->setCurrentIndex(states->findData(document.activeState));
     outliner->clear();
     for (const auto& e : document.elements[document.activeState])
     {
@@ -264,8 +265,10 @@ void StudioEditor::refresh(int selected)
         outliner->setCurrentItem(outliner->topLevelItem(qBound(0, selected, outliner->topLevelItemCount() - 1)));
     profile->setText("  " + document.gameLabel + (document.dirty ? " *" : ""));
     profile->setToolTip(configurationPath());
+    refreshMarioControls();
     refreshing = false;
     selectElement();
+    applyPresentation();
 }
 
 void StudioEditor::selectElement()
@@ -285,8 +288,17 @@ void StudioEditor::selectElement()
         bounds[2]->setMaximum(256 - e.x); bounds[3]->setMaximum(192 - e.y);
         bounds[2]->setValue(e.width); bounds[3]->setValue(e.height);
         enabled->setChecked(e.enabled);
+        destination[2]->setMaximum(256); destination[3]->setMaximum(192);
+        destination[0]->setValue(e.destination.x()); destination[1]->setValue(e.destination.y());
+        destination[2]->setMaximum(256-e.destination.x()); destination[3]->setMaximum(192-e.destination.y());
+        destination[2]->setValue(e.destination.width()); destination[3]->setValue(e.destination.height());
+        for (auto spin : destination) spin->setEnabled(document.marioEnabled);
     }
     else name->clear();
+    hudCanvas->selected = row;
+    hudCanvas->elements = document.elements[document.activeState];
+    hudCanvas->editingEnabled = document.marioEnabled;
+    hudCanvas->update();
     refreshing = false;
 }
 
@@ -301,14 +313,23 @@ void StudioEditor::editElement()
     StudioElement edited{text, source->currentIndex(), bounds[0]->value(), bounds[1]->value(),
         qMin(bounds[2]->value(), 256 - bounds[0]->value()),
         qMin(bounds[3]->value(), 192 - bounds[1]->value()), enabled->isChecked()};
-    if (e.name == edited.name && e.screen == edited.screen && e.x == edited.x && e.y == edited.y
+    edited.destination = QRect(destination[0]->value(), destination[1]->value(),
+        qMin(destination[2]->value(),256-destination[0]->value()), qMin(destination[3]->value(),192-destination[1]->value()));
+    if (e.destination == edited.destination && e.name == edited.name && e.screen == edited.screen && e.x == edited.x && e.y == edited.y
         && e.width == edited.width && e.height == edited.height && e.enabled == edited.enabled) return;
+    if (document.automatic)
+    {
+        document.automatic = false;
+        refreshing = true; automatic->setChecked(false); refreshing = false;
+        resetRecognition();
+    }
     e = edited;
     document.dirty = true;
     outliner->currentItem()->setText(0, e.name);
     outliner->currentItem()->setForeground(0, e.enabled ? window->palette().brush(QPalette::Text) : window->palette().brush(QPalette::Disabled, QPalette::Text));
     profile->setText("  " + document.gameLabel + " *");
     selectElement();
+    applyPresentation();
 }
 
 void StudioEditor::setPlayMode(bool play)
@@ -370,6 +391,8 @@ void StudioEditor::clearScreens()
 {
     QMutexLocker lock(&imageMutex);
     images[0] = QImage(); images[1] = QImage();
+    ++imageSerial;
+    resetRecognition();
 }
 
 void StudioEditor::captureScreens(void* top, void* bottom, bool software)
@@ -414,4 +437,5 @@ void StudioEditor::captureScreens(void* top, void* bottom, bool software)
     }
     QMutexLocker lock(&imageMutex);
     images[0] = captured[0]; images[1] = captured[1];
+    ++imageSerial;
 }

@@ -873,6 +873,7 @@ void MainWindow::createScreenPanel()
 
     connect(this, SIGNAL(screenLayoutChange()), panel, SLOT(onScreenLayoutChanged()));
     emit screenLayoutChange();
+    panel->setStudioPresentation(studioPresentation);
 }
 
 GL::Context* MainWindow::getOGLContext()
@@ -931,6 +932,14 @@ void MainWindow::drawScreen()
     if (!panel) return;
     return panel->drawScreen();
 }
+
+void MainWindow::setStudioPresentation(const StudioPresentation& p)
+{
+    studioPresentation = p;
+    if (panel) panel->setStudioPresentation(p);
+}
+
+void MainWindow::studioPause(bool pause) { onPause(pause); }
 
 void MainWindow::captureStudioScreens(void* top, void* bottom, bool software)
 {

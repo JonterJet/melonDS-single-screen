@@ -8,9 +8,16 @@ set(SOURCES_QT_SDL
     Screen.cpp
     Window.cpp
     StudioEditor.cpp
+    StudioMario.cpp
     StudioEditor.h
     StudioDocument.cpp
     StudioDocument.h
+    StudioRecognition.cpp
+    StudioRecognition.h
+    StudioRendering.cpp
+    StudioRendering.h
+    StudioViews.cpp
+    StudioViews.h
     EmuInstance.cpp
     EmuInstanceAudio.cpp
     EmuInstanceInput.cpp
@@ -283,4 +290,15 @@ if (ENABLE_OGLRENDERER)
     target_compile_definitions(melonDS PUBLIC OGLRENDERER_ENABLED)
     target_compile_definitions(melonDS PUBLIC MELONDS_GL_HEADER=${MELONDS_GL_HEADER})
     target_compile_definitions(core PUBLIC MELONDS_GL_HEADER=${MELONDS_GL_HEADER})
+endif()
+
+# QCoreApplication only: no emulator window, ROM or BIOS files are used.
+if (MELONSTUDIO_BUILD_TESTS AND USE_QT6)
+    add_executable(studio_recognition_tests
+        ${CMAKE_SOURCE_DIR}/tests/frontend/studio_recognition.cpp
+        StudioDocument.cpp StudioRecognition.cpp StudioRendering.cpp)
+    target_include_directories(studio_recognition_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(studio_recognition_tests PRIVATE Qt6::Core Qt6::Gui)
+    add_test(NAME studio_synthetic COMMAND studio_recognition_tests)
+    set_tests_properties(studio_synthetic PROPERTIES TIMEOUT 15)
 endif()

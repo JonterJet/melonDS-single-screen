@@ -32,6 +32,7 @@
 
 #include "glad/glad.h"
 #include "ScreenLayout.h"
+#include "StudioRendering.h"
 #include "duckstation/gl/context.h"
 
 
@@ -59,6 +60,7 @@ public:
     virtual ~ScreenPanel();
 
     void setFilter(bool filter);
+    void setStudioPresentation(const StudioPresentation& presentation);
     void onBottomScreenRevealChanged(bool revealed);
 
     void setMouseHide(bool enable, int delay);
@@ -98,6 +100,11 @@ protected:
     float screenMatrix[kMaxScreenTransforms][6];
     int screenKind[kMaxScreenTransforms];
     int numScreens;
+
+    QMutex studioMutex;
+    int studioSizing = -1;
+    QVector<StudioElement> studioOverlays;
+    bool studioRevealActive = false;
 
     bool touching = false;
 
@@ -223,6 +230,7 @@ private:
 
     GLuint screenVertexBuffer, screenVertexArray;
     GLuint screenTexture;
+    GLuint studioVertexBuffer = 0, studioVertexArray = 0;
     GLuint screenShaderProgram;
     GLint screenShaderTransformULoc, screenShaderScreenSizeULoc;
 

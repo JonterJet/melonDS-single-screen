@@ -22,6 +22,11 @@ project(melonDS
     HOMEPAGE_URL "https://melonds.kuribo64.net"
     LANGUAGES C CXX)
 
+option(MELONSTUDIO_BUILD_TESTS "Build headless synthetic MelonStudio tests" OFF)
+if (MELONSTUDIO_BUILD_TESTS)
+    enable_testing()
+endif()
+
 include(CheckSymbolExists)
 include(CheckLibraryExists)
 include(CMakeDependentOption)

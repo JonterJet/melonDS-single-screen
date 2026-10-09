@@ -40,5 +40,6 @@ link[link.index('-o') + 1] = str(test_dir / 'input-test')
 link = [str(renamed_main) if (build / arg).resolve() == original_main.resolve() else arg for arg in link]
 link.insert(link.index('-o'), str(test_object))
 subprocess.run(link, cwd=build, check=True)
+if '--build-only' in sys.argv: sys.exit(0)
 for mode in ([], ['--dsi']):
     subprocess.run([str(test_dir / 'input-test'), *mode], cwd=build, check=True, timeout=60)

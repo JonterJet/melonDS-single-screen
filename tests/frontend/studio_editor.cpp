@@ -1,6 +1,13 @@
 // Exercises the actual Qt editor and persisted documents without game/BIOS assets.
 #include "main.h"
 #include "StudioEditor.h"
+#include "StudioViews.h"
+extern const char* kScreenVS;
+extern const char* kScreenFS;
+#include <QListWidget>
+#include <QDoubleSpinBox>
+#include <QLabel>
+#include <QMouseEvent>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDockWidget>
@@ -32,6 +39,55 @@ static void settle(int ms = 30)
     QElapsedTimer timer; timer.start();
     do { QApplication::processEvents(); QThread::msleep(5); } while (timer.elapsed() < ms);
 }
+// Test the production shader and overlay geometry against a live array texture.
+static void checkGlOverlay(GLuint texture)
+{
+    auto shader = [](GLenum type, const char* source) {
+        GLuint id = glCreateShader(type); glShaderSource(id,1,&source,nullptr); glCompileShader(id);
+        GLint ok; glGetShaderiv(id,GL_COMPILE_STATUS,&ok); require(ok,"Overlay shader compile failed"); return id;
+    };
+    GLuint vs=shader(GL_VERTEX_SHADER,kScreenVS), fs=shader(GL_FRAGMENT_SHADER,kScreenFS);
+    GLuint program=glCreateProgram(); glAttachShader(program,vs); glAttachShader(program,fs);
+    glBindAttribLocation(program,0,"vPosition"); glBindAttribLocation(program,1,"vTexcoord"); glLinkProgram(program);
+    GLint ok; glGetProgramiv(program,GL_LINK_STATUS,&ok); require(ok,"Overlay shader link failed");
+    glUseProgram(program); glUniform2f(glGetUniformLocation(program,"uScreenSize"),256,192);
+    float matrix[]={1,0,0,1,0,0}; glUniformMatrix2x3fv(glGetUniformLocation(program,"uTransform"),1,GL_TRUE,matrix);
+    glUniform1i(glGetUniformLocation(program,"ScreenTex"),0);
+    GLuint output,fbo,vao,vbo;
+    glGenTextures(1,&output); glBindTexture(GL_TEXTURE_2D,output);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,256,192,0,GL_RGBA,GL_UNSIGNED_BYTE,nullptr);
+    glGenFramebuffers(1,&fbo); glBindFramebuffer(GL_FRAMEBUFFER,fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,output,0);
+    require(glCheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE,"Overlay framebuffer failed");
+    glViewport(0,0,256,192); glGenVertexArrays(1,&vao); glBindVertexArray(vao);
+    glGenBuffers(1,&vbo); glBindBuffer(GL_ARRAY_BUFFER,vbo);
+    glEnableVertexAttribArray(0); glVertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,5*sizeof(float),nullptr);
+    glEnableVertexAttribArray(1); glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,5*sizeof(float),reinterpret_cast<void*>(2*sizeof(float)));
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D_ARRAY,texture);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    StudioElement base; base.screen=0; base.x=base.y=0; base.width=256; base.height=192; base.destination=QRect(0,0,256,192);
+    StudioElement overlay; overlay.screen=1; overlay.x=32; overlay.y=24; overlay.width=128; overlay.height=96;
+    overlay.destination=QRect(168,120,80,60);
+    auto draw=[&](const StudioElement& element) { auto v=studioOverlayVertices(element); glBufferData(GL_ARRAY_BUFFER,sizeof(v),v.data(),GL_STREAM_DRAW); glDrawArrays(GL_TRIANGLES,0,6); };
+    auto pixel=[&](int x,int y) { unsigned char rgba[4]; glReadPixels(x,191-y,1,1,GL_RGBA,GL_UNSIGNED_BYTE,rgba); return QColor(rgba[0],rgba[1],rgba[2]); };
+    draw(base); draw(overlay);
+    require(pixel(180,140).blue()>240 && pixel(20,20).red()>240,"Live GL crop/scale output failed");
+    QVector<quint32> green(256*192,0xff00ff00);
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY,0,0,0,1,256,192,1,GL_BGRA,GL_UNSIGNED_BYTE,green.constData());
+    draw(base); draw(overlay); require(pixel(180,140).green()>240,"GL overlay did not update with live pixels");
+    draw(base); require(pixel(180,140).red()>240,"Omitting overlay did not restore base");
+    glBindFramebuffer(GL_FRAMEBUFFER,0); glUseProgram(0); glBindVertexArray(0);
+    glDeleteBuffers(1,&vbo); glDeleteVertexArrays(1,&vao); glDeleteFramebuffers(1,&fbo); glDeleteTextures(1,&output);
+    glDeleteProgram(program); glDeleteShader(vs); glDeleteShader(fs);
+}
+static void drag(QWidget* widget, QPoint from, QPoint to)
+{
+    QMouseEvent press(QEvent::MouseButtonPress,QPointF(from),QPointF(from),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+    QMouseEvent move(QEvent::MouseMove,QPointF(to),QPointF(to),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
+    QMouseEvent release(QEvent::MouseButtonRelease,QPointF(to),QPointF(to),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+    QApplication::sendEvent(widget,&press); QApplication::sendEvent(widget,&move); QApplication::sendEvent(widget,&release);
+}
 int main(int argc, char** argv)
 {
     QTemporaryDir temporary;
@@ -58,7 +114,7 @@ int main(int argc, char** argv)
         auto editor = window->findChild<StudioEditor*>();
         require(editor && window->centralWidget() == window->panel, "Live central viewport missing");
         auto docks = window->findChildren<QDockWidget*>();
-        require(docks.size() == 4, "Expected all four editor panels");
+        require(docks.size() == 7, "Expected editor and Mario Kart tool panels");
         auto outline = window->findChild<QTreeWidget*>("StudioOutliner");
         auto name = window->findChild<QLineEdit*>("StudioElementName");
         auto states = window->findChild<QComboBox*>("StudioSceneStates");
@@ -156,6 +212,7 @@ int main(int argc, char** argv)
         glGetIntegerv(GL_PACK_SKIP_ROWS, &restored);
         require(restored == 3, "Preview must restore pixel pack offsets");
         glPixelStorei(GL_PACK_ROW_LENGTH, 0); glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+        checkGlOverlay(texture);
         glDeleteTextures(1, &texture); context.doneCurrent();
         settle(220); snapshot = preview->grab().toImage();
         require(snapshot.pixelColor(snapshot.width()/2, snapshot.height()/4).red() > 240
@@ -190,6 +247,80 @@ int main(int argc, char** argv)
         QKeyEvent press(QEvent::KeyPress, Qt::Key_F9, Qt::NoModifier);
         QApplication::sendEvent(window, &press); settle();
         require(!inst->getEmuThread()->isBottomScreenRevealed(), "Inspector typing must not trigger gameplay hotkeys");
+        // The no-ROM test feeds synthetic frames through the real editor mailbox.
+        // Pause/capture of a running Mario Kart ROM remains a manual check.
+        editor->setGame("mkds-synthetic", "Mario Kart DS synthetic test");
+        auto mario=window->findChild<QCheckBox*>("StudioMarioEnabled");
+        auto automatic=window->findChild<QCheckBox*>("StudioAutomaticRecognition");
+        auto refState=window->findChild<QComboBox*>("StudioReferenceState");
+        auto references=window->findChild<QListWidget*>("StudioReferences");
+        auto debug=window->findChild<QLabel*>("StudioRecognitionDebug");
+        auto screens=static_cast<StudioScreensWidget*>(preview);
+        auto canvas=window->findChild<QWidget*>("StudioHudCanvas");
+        auto hud=static_cast<StudioHudCanvas*>(canvas);
+        mario->setChecked(true);
+        require(states->count()==5 && states->currentData().toInt()==StudioRacing,"Mario Kart scenes missing");
+        auto feed=[&](quint32 color,int ms) {
+            QVector<quint32> pixels(256*192,color); QElapsedTimer timer; timer.start();
+            do { editor->captureScreens(pixels.data(),bottom.data(),true); settle(110); } while(timer.elapsed()<ms);
+        };
+        auto teach=[&](int state,quint32 color,int screen) {
+            refState->setCurrentIndex(refState->findData(state)); feed(color,220);
+            screens->selecting=true; auto r=screens->screenRect(screen);
+            drag(screens,r.topLeft()+QPoint(r.width()/4,r.height()/4),r.topLeft()+QPoint(r.width()/2,r.height()/2));
+            require(references->count()>0,"Region teaching failed");
+        };
+        teach(StudioMarioFirst,0xffff0000,0); teach(StudioMarioFirst,0xffffff00,0);
+        require(references->count()==2,"Multiple alternatives missing");
+        teach(StudioRacing,0xff00ff00,0);
+        auto threshold=window->findChild<QDoubleSpinBox*>("StudioReferenceThreshold"); threshold->setValue(99);
+        auto layout=window->findChild<QComboBox*>("StudioSceneLayout");
+        states->setCurrentIndex(states->findData(StudioMarioFirst)); layout->setCurrentIndex(int(StudioLayout::Bottom));
+        states->setCurrentIndex(states->findData(StudioRacing));
+        window->findChild<QPushButton*>("StudioAddLiveMap")->click();
+        require(outline->topLevelItemCount()==1,"Live map missing from racing Outliner");
+        require(hud->elements[0].screen==1 && hud->elements[0].width==256,"Map must use live bottom screen");
+        // Move and resize via actual mouse events; destination coordinates persist.
+        hud->resize(528,400); auto cr=hud->canvasRect();
+        auto point=[&](int x,int y) { return cr.topLeft()+QPoint(x*cr.width()/256,y*cr.height()/192); };
+        drag(hud,point(180,130),point(140,110));
+        require(hud->elements[0].destination.x()<168,"HUD canvas move failed");
+        auto destinationBefore=hud->elements[0].destination;
+        drag(hud,point(destinationBefore.right()-2,destinationBefore.bottom()-2),point(destinationBefore.right()-15,destinationBefore.bottom()-10));
+        require(hud->elements[0].destination.width()<destinationBefore.width(),"HUD canvas resize failed");
+        automatic->setChecked(true); feed(0xff00ff00,700);
+        require(automatic->isChecked() && debug->text().contains("Active: Racing"),"Automatic racing confirmation failed");
+        require(window->panel->minimumSize()==QSize(256,192),"Racing top-screen override failed");
+        QMetaObject::invokeMethod(states,"activated",Qt::DirectConnection,Q_ARG(int,states->currentIndex()));
+        require(!automatic->isChecked(),"Choosing current scene must manually override detection");
+        automatic->setChecked(true); feed(0xff00ff00,700);
+        play->setChecked(true); window->toggleFullscreen(); settle(); feed(0xffff0000,700);
+        require(debug->text().contains("Active: Main menus"),"Recognition must work in fullscreen Play mode");
+        feed(0xff0000ff,700);
+        require(debug->text().contains("Active: Unknown - fallback layout"),"Unknown must use fallback");
+        window->toggleFullscreen(); play->setChecked(false); settle();
+        states->setCurrentIndex(states->findData(StudioRacing));
+        require(!automatic->isChecked() && debug->text().contains("Manual override"),"Scene selection must override detection");
+        require(outline->topLevelItemCount()==1,"Scene map was not restored");
+        require(editor->saveOnClose(),"Mario profile save failed");
+        QString marioPath=editor->configurationPath(); StudioDocument marioDocument; marioDocument.gameId="mkds-synthetic";
+        require(marioDocument.load(marioPath,error) && marioDocument.references[StudioMarioFirst].size()==2
+            && marioDocument.references[StudioRacing][0].threshold==0.99
+            && marioDocument.elements[StudioRacing][0].destination==hud->elements[0].destination,
+            "References/settings/live layouts failed persistence");
+        screens->selecting=true;
+        editor->setGame("other-mkds-profile","Other profile");
+        require(!screens->selecting && screens->images[0].isNull(),"Switching games must cancel stale region selection");
+        require(!mario->isChecked(),"Mario tools leaked into another game");
+        editor->setGame("mkds-synthetic","Mario Kart DS synthetic test");
+        require(mario->isChecked() && outline->topLevelItemCount()==1,"Mario profile reload failed");
+        if (qEnvironmentVariableIsSet("MELONSTUDIO_TEST_SCREENSHOT"))
+        {
+            feed(0xff00ff00,220);
+            for (auto dock : docks) if (dock->windowTitle()=="Recognition Rules") { dock->show(); dock->raise(); }
+            settle(); window->grab().save(qEnvironmentVariable("MELONSTUDIO_TEST_SCREENSHOT")+"-mkds.png");
+        }
+        std::cout << "Synthetic Mario Kart editor teaching, alternatives, automatic/fullscreen states, unknown fallback, manual override, HUD move/resize, profiles and live GL overlay pixels passed\n";
         std::cout << (dsi ? "DSi" : "DS") << ": editor panels, Inspector, ordering, scenes, mode toggle/fullscreen, per-game persistence, validation, software/OpenGL screen previews, input isolation passed\n";
     }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; result = 1; }

@@ -134,6 +134,14 @@ void ScreenPanel::loadConfig()
     screenAspectBot = cfg.GetInt("ScreenAspectBot");
 }
 
+void ScreenPanel::setStudioPresentation(const StudioPresentation& p)
+{
+    { QMutexLocker lock(&studioMutex); studioSizing = p.sizing; studioOverlays = p.overlays; }
+    setMinimumSize(screenGetMinSize(1));
+    setupScreenLayout();
+    update();
+}
+
 void ScreenPanel::setFilter(bool filter)
 {
     this->filter = filter;
@@ -149,13 +157,14 @@ void ScreenPanel::setMouseHide(bool enable, int delay)
 
 void ScreenPanel::setupScreenLayout()
 {
+    QMutexLocker lock(&studioMutex);
     int w = width();
     int h = height();
 
-    int sizing = screenSizing;
+    int sizing = studioSizing >= 0 ? studioSizing : screenSizing;
     if (sizing == screenSizing_Auto) sizing = autoScreenSizing;
-    if (sizing == screenSizing_TopOnly && bottomScreenRevealed)
-        sizing = screenSizing_BotOnly;
+    studioRevealActive = sizing == screenSizing_TopOnly && bottomScreenRevealed;
+    if (studioRevealActive) sizing = screenSizing_BotOnly;
 
     if (sizing == screenSizing_TopOnly && touching)
     {
@@ -203,8 +212,9 @@ QSize ScreenPanel::screenGetMinSize(int factor = 1)
     int w = 256 * factor;
     int h = 192 * factor;
 
-    if (screenSizing == screenSizing_TopOnly
-        || screenSizing == screenSizing_BotOnly)
+    int sizing = studioSizing >= 0 ? studioSizing : screenSizing;
+    if (sizing == screenSizing_TopOnly
+        || sizing == screenSizing_BotOnly)
     {
         return QSize(w, h);
     }
@@ -258,7 +268,7 @@ void ScreenPanel::onAutoScreenSizingChanged(int sizing)
 void ScreenPanel::onBottomScreenRevealChanged(bool revealed)
 {
     bottomScreenRevealed = revealed;
-    if (screenSizing != screenSizing_TopOnly) return;
+    if ((studioSizing >= 0 ? studioSizing : screenSizing) != screenSizing_TopOnly) return;
 
     // Do not change the persisted sizing or resize the window while held.
     setupScreenLayout();
@@ -845,6 +855,11 @@ void ScreenPanelNative::paintEvent(QPaintEvent* event)
             painter.setTransform(screenTrans[i]);
             painter.drawImage(screenrc, screen[screenKind[i]]);
         }
+        if (numScreens > 0 && !studioRevealActive)
+        {
+            painter.setTransform(screenTrans[0]);
+            paintStudioOverlays(painter, screen, studioOverlays);
+        }
         emuInstance->renderLock.unlock();
     }
 
@@ -986,6 +1001,15 @@ void ScreenPanelGL::initOpenGL()
     glEnableVertexAttribArray(1); // texcoord
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 5*4, (void*)(2*4));
 
+    glGenBuffers(1, &studioVertexBuffer);
+    glBindBuffer(GL_ARRAY_BUFFER, studioVertexBuffer);
+    glGenVertexArrays(1, &studioVertexArray);
+    glBindVertexArray(studioVertexArray);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 5*sizeof(float), nullptr);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 5*sizeof(float), reinterpret_cast<void*>(2*sizeof(float)));
+
     glGenTextures(1, &screenTexture);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D_ARRAY, screenTexture);
@@ -1057,6 +1081,8 @@ void ScreenPanelGL::deinitOpenGL()
 
     glDeleteVertexArrays(1, &screenVertexArray);
     glDeleteBuffers(1, &screenVertexBuffer);
+    glDeleteVertexArrays(1, &studioVertexArray);
+    glDeleteBuffers(1, &studioVertexBuffer);
 
     glDeleteProgram(screenShaderProgram);
 
@@ -1186,12 +1212,26 @@ void ScreenPanelGL::drawScreen()
         glBindBuffer(GL_ARRAY_BUFFER, screenVertexBuffer);
         glBindVertexArray(screenVertexArray);
 
+        studioMutex.lock();
         for (int i = 0; i < numScreens; i++)
         {
             glUniformMatrix2x3fv(screenShaderTransformULoc, 1, GL_TRUE, screenMatrix[i]);
             glDrawArrays(GL_TRIANGLES, screenKind[i] == 0 ? 0 : 2 * 3, 2 * 3);
         }
 
+        if (numScreens > 0 && !studioRevealActive)
+        {
+            glBindVertexArray(studioVertexArray);
+            glBindBuffer(GL_ARRAY_BUFFER, studioVertexBuffer);
+            glUniformMatrix2x3fv(screenShaderTransformULoc, 1, GL_TRUE, screenMatrix[0]);
+            for (const auto& e : studioOverlays) if (e.enabled)
+            {
+                auto vertices = studioOverlayVertices(e);
+                glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STREAM_DRAW);
+                glDrawArrays(GL_TRIANGLES, 0, 6);
+            }
+        }
+        studioMutex.unlock();
         screenSettingsLock.unlock();
     }
 

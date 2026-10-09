@@ -1,4 +1,7 @@
-# MelonStudio: basic Qt 6 editor
+# MelonStudio: Qt 6 editor
+
+For the Mario Kart DS recognition and live HUD tools, see [MARIO_KART_DS.md](MARIO_KART_DS.md).
+The basic interface below still applies when Mario Kart tools are disabled.
 
 MelonStudio is built into this fork's existing Qt frontend. The executable is
 still named `melonDS.exe`, and the central game viewport uses melonDS's original
@@ -7,7 +10,7 @@ rendering, input, DS/DSi emulation, screen layout, and save files.
 ## Windows download and launch
 
 1. Open this fork's **Actions → Windows** page and select the successful run for
-   the `ci/melonstudio-editor` branch (or its pull request).
+   the `ci/melonstudio-mkds` branch (or its pull request).
 2. In **Artifacts**, click **melonDS-windows-x86_64**. Sign into GitHub if the
    download link is unavailable.
 3. Extract the ZIP into a writable folder and run `melonDS.exe`. The Windows
@@ -17,7 +20,8 @@ rendering, input, DS/DSi emulation, screen layout, and save files.
    still applies. DSi emulation requires the same BIOS, firmware, and NAND setup
    as this fork did before the editor.
 
-Windows Actions only compiles and uploads the executable. It does **not** launch
+Windows Actions compiles and uploads the executable, then runs bounded headless
+synthetic recognition/profile tests. It does **not** launch
 the GUI or wait on `--help`. Artifact upload and dependency-cache saving run
 independently after a successful build.
 
@@ -27,9 +31,9 @@ independently after a successful build.
   keyboard input to the emulator. Touch input continues to use the existing
   bottom-screen coordinate transformation.
 - **Original DS Screens:** view-only live previews of both original screens,
-  updated five times per second, independent of Top only and hold-to-reveal.
+  updated around ten times per second, independent of Top only and hold-to-reveal.
   Software and OpenGL rendering are supported. The previews are hidden in Play
-  mode, avoiding further GPU readback work while playing.
+  mode; automatic recognition continues requesting frames when enabled.
 - **Outliner:** add, remove, select, rename, and reorder HUD element records.
   Each scene has its own list. Up/Down determines the saved element order.
 - **Inspector:** edit the selected record's name, source screen, enabled flag,
@@ -69,8 +73,9 @@ unsupported-version files are rejected without replacing the loaded document.
 Saves use an atomic file replacement. A star beside the game label means the
 profile has unsaved changes.
 
-Freeform alpha masking, HUD compositing, automatic scene detection, and
-controller-to-touchscreen mappings are not implemented in this milestone.
+Freeform alpha masking and controller-to-touchscreen mappings are not implemented.
+Mario Kart DS profiles support rectangular live HUD composition and user-trained
+automatic scene detection as described in the linked guide.
 
 ## Developer verification
 

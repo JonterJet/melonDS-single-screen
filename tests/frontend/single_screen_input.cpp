@@ -115,6 +115,24 @@ int main(int argc, char** argv)
                 require(!native.isTouching() && !gl.isTouching(), "Hidden touchscreen stayed pressed");
                 ++cases;
             }
+            // A scene override must reveal bottom even when saved View sizing is dual-screen.
+            cfg.SetInt("ScreenSizing", screenSizing_Even); native.reload(); gl.reload();
+            StudioPresentation presentation; presentation.sizing=screenSizing_TopOnly;
+            StudioElement map; presentation.overlays.append(map);
+            native.setStudioPresentation(presentation); gl.setStudioPresentation(presentation);
+            require(native.displays(0) && gl.displays(0), "Scene top override failed");
+            press(true);
+            await([&] { return native.displays(1) && gl.displays(1); }, "Scene override lost controller reveal");
+            require(cfg.GetInt("ScreenSizing")==screenSizing_Even,"Scene override modified saved layout");
+            native.beginTouch(); gl.beginTouch(); press(false);
+            await([&] { return native.displays(0) && gl.displays(0); }, "Scene reveal release failed");
+            require(!native.isTouching() && !gl.isTouching(),"Scene override left hidden touch pressed");
+            presentation.sizing=screenSizing_BotOnly; native.setStudioPresentation(presentation); gl.setStudioPresentation(presentation);
+            require(native.displays(1) && gl.displays(1),"Scene bottom override failed");
+            presentation.sizing=screenSizing_Even; native.setStudioPresentation(presentation); gl.setStudioPresentation(presentation);
+            require(native.count()==3 && gl.count()==3,"Scene Both override lost Hybrid");
+            native.setStudioPresentation({}); gl.setStudioPresentation({});
+            cfg.SetInt("ScreenSizing",screenSizing_TopOnly); native.reload(); gl.reload(); ++cases;
             // Both bindings contribute to the held state; releasing one must
             // not hide the bottom screen while the other remains pressed.
             QKeyEvent keyDown(QEvent::KeyPress, Qt::Key_F9, Qt::NoModifier);

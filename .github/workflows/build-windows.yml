@@ -8,6 +8,8 @@ on:
   pull_request:
     branches:
       - master
+      - ci/*
+  workflow_dispatch:
 
 env:
   MELONDS_GIT_BRANCH: ${{ github.ref }}
@@ -49,7 +51,7 @@ jobs:
       uses: lukka/run-cmake@v10
       with:
         configurePreset: release-windows-${{ matrix.arch.name }}
-        configurePresetAdditionalArgs: "['-DENABLE_DEBUG_DEPS=OFF', '-DUSE_QT6=ON', '-DMELONDS_EMBED_BUILD_INFO=ON']"
+        configurePresetAdditionalArgs: "['-DENABLE_DEBUG_DEPS=OFF', '-DUSE_QT6=ON', '-DMELONSTUDIO_BUILD_TESTS=ON', '-DMELONDS_EMBED_BUILD_INFO=ON']"
         buildPreset: release-windows-${{ matrix.arch.name }}
     # Do not launch the GUI executable in CI: --help can wait for UI interaction.
     # Upload immediately after compilation; test the downloaded build manually.
@@ -60,6 +62,10 @@ jobs:
         name: melonDS-windows-${{ matrix.arch.name }}
         path: .\build\release-windows-${{ matrix.arch.name }}\melonDS.exe
         if-no-files-found: error
+    # Synthetic QCoreApplication tests only; never launch melonDS.exe in CI.
+    - name: Test synthetic recognition and profiles (15 second limit)
+      if: ${{ always() && steps.build.outcome == 'success' }}
+      run: ctest --test-dir build/release-windows-${{ matrix.arch.name }} --output-on-failure --timeout 15
     - name: Save vcpkg cache
       if: ${{ always() && steps.build.outcome == 'success' }}
       continue-on-error: true

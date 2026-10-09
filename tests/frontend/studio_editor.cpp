@@ -14,6 +14,7 @@
 #include <QSpinBox>
 #include <QTemporaryDir>
 #include <QTreeWidget>
+#include <QToolBar>
 #include <QStyle>
 #include <iostream>
 #include <stdexcept>
@@ -106,6 +107,21 @@ int main(int argc, char** argv)
         for (auto d : docks) require(!d->isVisible(), "Play mode must hide all editor panels");
         play->setChecked(false);
         require(!docks[0]->isVisible() && docks[1]->isVisible(), "Editor mode must restore dock visibility");
+        auto toolbar = window->findChild<QToolBar*>("MelonStudio.Toolbar");
+        window->toggleFullscreen(); settle();
+        require(window->isFullScreen() && !toolbar->isVisible(), "Fullscreen must hide the editor toolbar");
+        for (auto d : docks) require(!d->isVisible(), "Fullscreen must hide all editor panels");
+        require(window->panel->size() == window->contentsRect().size(), "Fullscreen viewport must fill the window");
+        window->toggleFullscreen(); settle();
+        require(!window->isFullScreen() && toolbar->isVisible() && !docks[0]->isVisible()
+            && docks[1]->isVisible(), "Leaving fullscreen must restore editor visibility");
+        play->setChecked(true);
+        window->toggleFullscreen(); settle();
+        require(window->isFullScreen() && !toolbar->isVisible(), "Fullscreen Play mode must hide the toolbar");
+        window->toggleFullscreen(); settle();
+        require(editor->isPlayMode() && toolbar->isVisible(), "Leaving fullscreen must retain Play mode");
+        for (auto d : docks) require(!d->isVisible(), "Play mode must remain free of editor panels");
+        play->setChecked(false);
         docks[0]->show();
         settle(220);
         QVector<quint32> top(256 * 192, 0xffff0000), bottom(256 * 192, 0xff0000ff);
@@ -174,7 +190,7 @@ int main(int argc, char** argv)
         QKeyEvent press(QEvent::KeyPress, Qt::Key_F9, Qt::NoModifier);
         QApplication::sendEvent(window, &press); settle();
         require(!inst->getEmuThread()->isBottomScreenRevealed(), "Inspector typing must not trigger gameplay hotkeys");
-        std::cout << (dsi ? "DSi" : "DS") << ": editor panels, Inspector, ordering, scenes, mode toggle, per-game persistence, validation, software/OpenGL screen previews, input isolation passed\n";
+        std::cout << (dsi ? "DSi" : "DS") << ": editor panels, Inspector, ordering, scenes, mode toggle/fullscreen, per-game persistence, validation, software/OpenGL screen previews, input isolation passed\n";
     }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; result = 1; }
     window->close(); settle();

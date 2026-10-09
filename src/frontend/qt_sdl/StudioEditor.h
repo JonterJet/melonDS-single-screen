@@ -17,6 +17,7 @@ class QSpinBox;
 class QCheckBox;
 class QWidget;
 class QAction;
+class QToolBar;
 
 class StudioEditor : public QObject
 {
@@ -25,6 +26,7 @@ public:
     explicit StudioEditor(MainWindow* window);
     bool saveOnClose();
     void clearScreens();
+    void setFullscreen(bool full);
     void setGame(const QString& id, const QString& label);
     // Called only by the rendering thread with its OpenGL context current.
     void captureScreens(void* top, void* bottom, bool software);
@@ -48,6 +50,9 @@ private:
     QWidget* inspector;
     QComboBox* states;
     QAction* playAction;
+    QToolBar* toolbar;
+    QVector<bool> fullscreenVisibility;
+    bool fullscreenToolbarVisible = true;
     bool refreshing = false;
     bool playMode = false;
     std::atomic<bool> captureRequested{false};

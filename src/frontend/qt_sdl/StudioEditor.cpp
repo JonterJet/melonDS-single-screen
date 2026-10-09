@@ -69,7 +69,7 @@ QDockWidget* StudioEditor::dock(const QString& title, QWidget* content, int area
 StudioEditor::StudioEditor(MainWindow* window) : QObject(window), window(window)
 {
     auto menu = window->menuBar()->addMenu("Studio");
-    auto toolbar = new QToolBar("MelonStudio", window);
+    toolbar = new QToolBar("MelonStudio", window);
     toolbar->setObjectName("MelonStudio.Toolbar");
     toolbar->setMovable(false);
     window->addToolBar(toolbar);
@@ -325,6 +325,35 @@ void StudioEditor::setPlayMode(bool play)
     {
         for (int i = 0; i < docks.size(); ++i) { docks[i]->setVisible(dockVisibility.value(i, true)); docks[i]->toggleViewAction()->setEnabled(true); }
         playAction->setText("Play mode");
+    }
+    window->panel->setFocus(Qt::OtherFocusReason);
+}
+
+void StudioEditor::setFullscreen(bool full)
+{
+    if (full)
+    {
+        editElement();
+        fullscreenVisibility.clear();
+        for (auto d : docks)
+        {
+            fullscreenVisibility.append(d->isVisible());
+            d->hide();
+            d->toggleViewAction()->setEnabled(false);
+        }
+        fullscreenToolbarVisible = toolbar->isVisible();
+        toolbar->hide();
+        playAction->setEnabled(false);
+    }
+    else
+    {
+        toolbar->setVisible(fullscreenToolbarVisible);
+        for (int i = 0; i < docks.size(); ++i)
+        {
+            docks[i]->setVisible(fullscreenVisibility.value(i, true));
+            docks[i]->toggleViewAction()->setEnabled(!playMode);
+        }
+        playAction->setEnabled(true);
     }
     window->panel->setFocus(Qt::OtherFocusReason);
 }

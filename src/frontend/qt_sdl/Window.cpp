@@ -2186,12 +2186,14 @@ void MainWindow::toggleFullscreen()
     if (!isFullScreen())
     {
         showFullScreen();
+        if (studio) studio->setFullscreen(true);
         if (hasMenu)
             menuBar()->setFixedHeight(0); // Don't use hide() as menubar actions stop working
     }
     else
     {
         showNormal();
+        if (studio) studio->setFullscreen(false);
         if (hasMenu)
         {
             int menuBarHeight = menuBar()->sizeHint().height();

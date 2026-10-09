@@ -41,6 +41,8 @@ independently after a successful build.
 - **Play mode / Editor mode:** hide and restore dock panels while preserving
   their visibility. The toggle focuses the viewport and leaves the emulator's
   running/paused state unchanged. Use the existing System menu to pause.
+  The existing fullscreen hotkey hides both docks and the toolbar, then restores
+  the previous Editor/Play mode and panel visibility when leaving fullscreen.
 - **Save configuration / Load configuration:** save or reload the current game's
   editor data. Reload asks before discarding unsaved changes. Dirty profiles
   save automatically when switching games or closing the editor. Save errors
@@ -84,7 +86,7 @@ build/layout-test
 ```
 
 The editor harness checks panels and central viewport, Inspector bounds,
-Outliner ordering/deletion, independent scenes, mode and visibility restoration,
+Outliner ordering/deletion, independent scenes, mode, fullscreen, and visibility restoration,
 per-game save/load, invalid-file rejection, live software and OpenGL preview pixels / GL state restoration, and
 keyboard isolation in DS and DSi modes. The existing controller harness checks
 Top only and hold/release behavior with an SDL virtual controller. These tests

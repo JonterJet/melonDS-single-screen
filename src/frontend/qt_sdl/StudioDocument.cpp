@@ -27,7 +27,7 @@ int StudioDocument::addScene(const QString& name)
 void StudioDocument::duplicateScene(int i)
 {
     if(i<0 || i>=sceneCount()) return;
-    int row=addScene(sceneNames[i]+" copy"); elements[row]=elements[i]; references[row]=references[i]; layouts[row]=layouts[i];
+    int row=addScene(sceneNames[i]+" copy"); elements[row]=elements[i]; for(auto& e : elements[row]) e.id=QUuid::createUuid().toString(QUuid::WithoutBraces); references[row]=references[i]; layouts[row]=layouts[i];
     moveScene(row,i+1); activeState=i+1;
 }
 void StudioDocument::removeScene(int i)
@@ -91,7 +91,7 @@ QJsonObject StudioDocument::toJson() const
         for (const auto& e : elements[i])
         {
             QJsonArray polygon; for(const auto& p : e.polygon) polygon.append(QJsonArray{p.x(),p.y()});
-            items.append(QJsonObject{{"name", e.name}, {"screen", e.screen}, {"x", e.x}, {"y", e.y},
+            items.append(QJsonObject{{"id", e.id}, {"name", e.name}, {"screen", e.screen}, {"x", e.x}, {"y", e.y},
                 {"width", e.width}, {"height", e.height}, {"enabled", e.enabled}, {"destination", rectJson(e.destination)}, {"polygon",polygon}});
         }
         for (const auto& r : references[i])
@@ -153,7 +153,9 @@ bool StudioDocument::load(const QString& path, QString& error)
     candidate.activeState = root["activeState"].toInt();
     if (!legacy)
     {
-        QString enabledKey=modern ? "sceneToolsEnabled" : "marioEnabled";
+        // Early v3 editor builds used the v2 flag name. Preserve their settings
+        // while writing the current spelling on the next successful save.
+        QString enabledKey=modern && root.contains("sceneToolsEnabled") ? "sceneToolsEnabled" : "marioEnabled";
         if (!root[enabledKey].isBool() || !root["automatic"].isBool() || !integer(root["fallback"], 0, 3)
             || !integer(root["confirmationMs"], 0, 5000) || !number(root["ambiguityMargin"], 0, 1)) return invalid();
         candidate.sceneToolsEnabled = root[enabledKey].toBool();
@@ -194,6 +196,11 @@ bool StudioDocument::load(const QString& path, QString& error)
                 }
                 if(!e.polygon.isEmpty() && (e.polygon.size()<3 || !QRectF(src).contains(e.polygon.boundingRect()))) return invalid();
             }
+            if(o.contains("id")) {
+                if(!o["id"].isString() || QUuid(o["id"].toString()).isNull()) return invalid();
+                e.id=o["id"].toString();
+            }
+            for(const auto& existing : candidate.elements[i]) if(existing.id==e.id) return invalid();
             candidate.elements[i].append(e);
         }
         if (!legacy) for (auto value : s["references"].toArray())

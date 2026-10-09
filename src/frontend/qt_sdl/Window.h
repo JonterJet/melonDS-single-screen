@@ -74,6 +74,7 @@ public:
     void captureStudioScreens(void* top, void* bottom, bool software);
     void setStudioPresentation(const StudioPresentation& presentation);
     void studioPause(bool pause);
+    void studioReset() { onReset(); }
     void studioReleaseKeys();
 
     bool preloadROMs(QStringList file, QStringList gbafile, bool boot);

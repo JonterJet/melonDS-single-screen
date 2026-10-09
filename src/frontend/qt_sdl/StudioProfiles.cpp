@@ -5,6 +5,8 @@
 #include <QJsonDocument>
 #include <QSaveFile>
 #include <QUuid>
+#include <QJsonArray>
+#include <algorithm>
 QString StudioProfiles::path(const QString& id) const
 {
     if(QUuid(id).isNull()) return {};
@@ -20,6 +22,14 @@ QVector<StudioProfileInfo> StudioProfiles::list() const
         if(json["format"]!="MelonStudio" || json["version"].toInt()!=3 || json["profileId"].toString()!=name.chopped(5)) continue;
         result.append({json["profileId"].toString(),json["gameLabel"].toString(),json["gameId"].toString()});
     }
+    QFile orderFile(root+"/order.json");
+    QJsonArray order;
+    if(orderFile.open(QIODevice::ReadOnly)) order=QJsonDocument::fromJson(orderFile.readAll()).array();
+    QStringList ids; for(const auto& id : order) ids.append(id.toString());
+    std::stable_sort(result.begin(),result.end(),[&](const auto& a,const auto& b) {
+        int ai=ids.indexOf(a.id), bi=ids.indexOf(b.id);
+        return (ai<0 ? ids.size() : ai)<(bi<0 ? ids.size() : bi);
+    });
     return result;
 }
 bool StudioProfiles::load(const QString& id,StudioDocument& doc,QString& error) const
@@ -66,6 +76,8 @@ bool StudioProfiles::duplicate(const QString& id,const QString& name,StudioDocum
 {
     StudioDocument candidate; if(!load(id,candidate,error)) return false;
     candidate.profileId=QUuid::createUuid().toString(QUuid::WithoutBraces); candidate.gameLabel=name.left(128);
+    for(auto& id : candidate.sceneIds) id=QUuid::createUuid().toString(QUuid::WithoutBraces);
+    for(auto& scene : candidate.elements) for(auto& e : scene) e.id=QUuid::createUuid().toString(QUuid::WithoutBraces);
     candidate.dirty=true; if(!save(candidate,error)) return false;
     doc=std::move(candidate); return true;
 }
@@ -76,5 +88,14 @@ bool StudioProfiles::remove(const QString& id,QString& error)
     QString archive=root+"/deleted/"; if(!QDir().mkpath(archive)) { error="Cannot create profile archive."; return false; }
     QString backup=archive+id+"-"+QUuid::createUuid().toString(QUuid::WithoutBraces)+".json";
     if(!QFile::rename(path(id),backup)) { error="Cannot archive the selected profile."; return false; }
+    return true;
+}
+
+bool StudioProfiles::setOrder(const QStringList& ids,QString& error)
+{
+    if(!QDir().mkpath(root)) { error="Cannot create profiles directory."; return false; }
+    QJsonArray order; for(const auto& id : ids) { if(path(id).isEmpty()) { error="Invalid profile identifier."; return false; } order.append(id); }
+    auto bytes=QJsonDocument(order).toJson(); QSaveFile file(root+"/order.json");
+    if(!file.open(QIODevice::WriteOnly) || file.write(bytes)!=bytes.size() || !file.commit()) { error=file.errorString(); return false; }
     return true;
 }

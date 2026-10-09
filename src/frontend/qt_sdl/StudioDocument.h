@@ -7,6 +7,7 @@
 #include <QPolygonF>
 #include <QString>
 #include <QVector>
+#include <QUuid>
 
 constexpr int StudioLegacyStateCount = 8;
 constexpr int StudioLegacyMarioFirst = 3;
@@ -21,6 +22,7 @@ struct StudioElement
     bool enabled = true;
     QRect destination{176, 120, 72, 54};
     QPolygonF polygon; // Absolute native DS coordinates; empty means legacy rectangle.
+    QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QRect sourceRect() const { return {x, y, width, height}; }
 };
 struct StudioReference

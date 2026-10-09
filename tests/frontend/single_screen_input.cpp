@@ -54,13 +54,14 @@ int main(int argc, char** argv)
     app.setQuitOnLastWindowClosed(false);
     QTemporaryDir config;
     require(config.isValid(), "Temporary config directory unavailable");
+    qputenv("XDG_CONFIG_HOME",(config.path()+"/config").toUtf8());
     emuDirectory = config.path();
     QString theme = QApplication::style()->objectName();
     systemThemeName = &theme;
     sysTimer.start();
     require(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK) == 0, SDL_GetError());
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
-    int device = SDL_JoystickAttachVirtual(SDL_JOYSTICK_TYPE_GAMECONTROLLER, 0, 2, 0);
+    int device = SDL_JoystickAttachVirtual(SDL_JOYSTICK_TYPE_GAMECONTROLLER, 2, 2, 0);
     require(device >= 0, "SDL virtual controller unavailable");
     SDL_Joystick* joystick = SDL_JoystickOpen(device);
     require(joystick != nullptr, SDL_GetError());
@@ -142,6 +143,13 @@ int main(int argc, char** argv)
             auto exit=window->findChild<QPushButton*>("StudioExitPlay");
             press(true); await([&] { return thread->isBottomScreenRevealed(); },"Controller reveal must work in Play");
             require(editor->isPlayMode() && exit && !exit->isVisible(),"Gamepad button must not reveal Exit Play");
+            SDL_LockMutex(inst->getJoyMutex().get());
+            int axisResult=SDL_JoystickSetVirtualAxis(joystick,0,16384);
+            SDL_UnlockMutex(inst->getJoyMutex().get()); require(axisResult==0,SDL_GetError());
+            QThread::msleep(150); QApplication::processEvents();
+            require(editor->isPlayMode() && !exit->isVisible(),"Ordinary gamepad movement must not reveal Exit Play");
+            SDL_LockMutex(inst->getJoyMutex().get()); SDL_JoystickSetVirtualAxis(joystick,0,0); SDL_UnlockMutex(inst->getJoyMutex().get());
+
             press(false); await([&] { return !thread->isBottomScreenRevealed(); },"Play reveal release");
             require(!exit->isVisible(),"Gamepad release must not reveal Exit Play"); play->setChecked(false); ++cases;
             // Both bindings contribute to the held state; releasing one must

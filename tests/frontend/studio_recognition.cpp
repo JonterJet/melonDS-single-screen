@@ -131,9 +131,27 @@ int main(int argc, char** argv)
         check(store.duplicate(originalId,"Another profile",duplicate,error) && duplicate.profileId!=originalId,"Profile duplication");
         duplicate.gameLabel="Renamed profile"; check(store.save(duplicate,error) && store.prefer(duplicate,error),"Profile rename/default");
         StudioDocument automatic; check(store.forRom(d.gameId,"ROM label",QString{},automatic,error) && automatic.profileId==duplicate.profileId,"Associated profile auto load");
+        check(store.setOrder({duplicate.profileId,originalId},error) && store.list()[0].id==duplicate.profileId,"Profile order persistence");
+        check(duplicate.sceneIds!=d.sceneIds,"Copied profile scene identities must be independent");
         check(store.remove(duplicate.profileId,error),"Profile archive/delete");
         check(store.forRom(d.gameId,"ROM label",QString{},automatic,error) && automatic.profileId==originalId,"Deleted profile fallback");
         check(automatic.sceneCount()==d.sceneCount() && automatic.elements[5].size()==d.elements[5].size(),"Dynamic profile persistence");
+        StudioDocument optional; optional.gameId="optional-uuid"; optional.gameLabel="Existing v3";
+        StudioElement original; original.polygon=overlay.polygon; original.x=original.y=0; original.width=256; original.height=192;
+        optional.elements[0].append(original);
+        auto oldV3=optional.toJson(); oldV3["marioEnabled"]=oldV3.take("sceneToolsEnabled"); auto oldScenes=oldV3["scenes"].toArray(); auto oldScene=oldScenes[0].toObject();
+        auto oldWidgets=oldScene["elements"].toArray(); auto oldWidget=oldWidgets[0].toObject(); oldWidget.remove("id"); oldWidgets[0]=oldWidget;
+        oldScene["elements"]=oldWidgets; oldScenes[0]=oldScene; oldV3["scenes"]=oldScenes;
+        QString optionalPath=dir.path()+"/optional.json"; QFile optionalFile(optionalPath); check(optionalFile.open(QIODevice::WriteOnly),"Write old v3 fixture");
+        optionalFile.write(QJsonDocument(oldV3).toJson()); optionalFile.close();
+        StudioDocument updated;
+        check(updated.load(optionalPath,error) && updated.sceneToolsEnabled && updated.elements[0][0].polygon==original.polygon && updated.elements[0][0].destination==original.destination,"Existing v3 widgets must preserve mask and transform when adding UUID");
+        auto generatedId=updated.elements[0][0].id;
+        check(!QUuid(generatedId).isNull() && updated.save(optionalPath,error) && updated.load(optionalPath,error) && updated.elements[0][0].id==generatedId,"Generated widget identity must persist");
+        auto duplicateIds=updated.toJson(); auto badScenes=duplicateIds["scenes"].toArray(); auto badScene=badScenes[0].toObject(); auto badWidgets=badScene["elements"].toArray(); badWidgets.append(badWidgets[0]);
+        badScene["elements"]=badWidgets; badScenes[0]=badScene; duplicateIds["scenes"]=badScenes;
+        QFile duplicateFile(dir.path()+"/duplicate-ids.json"); duplicateFile.open(QIODevice::WriteOnly); duplicateFile.write(QJsonDocument(duplicateIds).toJson()); duplicateFile.close();
+        auto preserved=updated.toJson(); check(!updated.load(duplicateFile.fileName(),error) && updated.toJson()==preserved,"Duplicate widget IDs must be rejected transactionally");
         // A version 2 file retains all eight scenes and reference images during import.
         StudioDocument v2; while(v2.sceneCount()<8) v2.addScene(StudioDocument::legacyStateName(v2.sceneCount()));
         v2.gameId="legacy-v2"; v2.gameLabel="Legacy Mario"; v2.references[5].append(ref); v2.layouts[5]=StudioLayout::Top;

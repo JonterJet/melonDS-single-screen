@@ -2216,6 +2216,7 @@ void MainWindow::toggleFullscreen()
 
 void MainWindow::onFullscreenToggled()
 {
+    if(studio && studio->isPlayMode()) { studio->exitPlayMode(); return; }
     toggleFullscreen();
 }
 

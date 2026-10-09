@@ -18,6 +18,7 @@
 #include <QScrollArea>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <QAction>
 
 namespace
 {
@@ -32,6 +33,8 @@ void layouts(QComboBox* combo)
 void StudioEditor::initializeSceneControls(QWidget* sceneWidget)
 {
     auto sceneOptions = new QVBoxLayout;
+    auto previewScene=new QPushButton("Preview selected scene (manual override)"); previewScene->setObjectName("StudioManualOverride"); sceneOptions->addWidget(previewScene);
+    connect(previewScene,&QPushButton::clicked,this,[this] { automatic->setChecked(false); applyPresentation(); });
     marioMode = new QCheckBox("Enable scene layouts and HUD");
     marioMode->setObjectName("StudioSceneToolsEnabled");
     automatic = new QCheckBox("Automatic recognition");
@@ -58,10 +61,6 @@ void StudioEditor::initializeSceneControls(QWidget* sceneWidget)
 
     rules = new QWidget;
     auto form = new QFormLayout(rules);
-    refState = new QComboBox; refState->setObjectName("StudioReferenceState");
-    for (int i = 0; i < document.sceneCount(); ++i) refState->addItem(document.sceneName(i), i);
-
-    form->addRow("Teach state", refState);
     refList = new QListWidget; refList->setObjectName("StudioReferences");
     refList->setMaximumHeight(110); form->addRow(refList);
     refName = new QLineEdit; refName->setMaxLength(128); refName->setObjectName("StudioReferenceName");
@@ -74,7 +73,7 @@ void StudioEditor::initializeSceneControls(QWidget* sceneWidget)
     capture->setObjectName("StudioTeachReference");
     auto remove = new QPushButton("Remove selected reference");
     form->addRow(capture); form->addRow(remove);
-    selectionHint = new QLabel("Choose a state above, pause and drag a distinctive region on either original screen.");
+    selectionHint = new QLabel("Select a scene in Game Profiles, then pause and drag a distinctive region on either original screen.");
     selectionHint->setWordWrap(true); form->addRow(selectionHint);
     auto resume = new QPushButton("Resume game"); form->addRow(resume);
     auto map = new QPushButton("Add live bottom-screen map to selected scene");
@@ -90,14 +89,13 @@ void StudioEditor::initializeSceneControls(QWidget* sceneWidget)
     note->setWordWrap(true); form->addRow(note);
     auto rulesScroll = new QScrollArea; rulesScroll->setWidgetResizable(true); rulesScroll->setWidget(rules);
     auto rulesDock = dock("Recognition Rules", rulesScroll, Qt::RightDockWidgetArea);
-    connect(refState, &QComboBox::currentIndexChanged, this, [this] { if (!refreshing) refreshReferences(); });
     connect(refList, &QListWidget::currentRowChanged, this, [this] { if (!refreshing) refreshReferences(); });
     connect(refName, &QLineEdit::editingFinished, this, &StudioEditor::editReference);
     connect(refThreshold, &QDoubleSpinBox::valueChanged, this, &StudioEditor::editReference);
     connect(refEnabled, &QCheckBox::toggled, this, &StudioEditor::editReference);
     connect(capture, &QPushButton::clicked, this, [this] { beginSelection(false); });
     connect(remove, &QPushButton::clicked, this, [this] {
-        int state = refState->currentData().toInt(), row = refList->currentRow();
+        int state = document.activeState, row = refList->currentRow();
         if (row < 0) return;
         document.references[state].removeAt(row); document.dirty = true;
         resetRecognition(); refreshReferences(); applyPresentation();
@@ -151,20 +149,16 @@ void StudioEditor::refreshSceneControls()
     sceneLayout->setCurrentIndex(int(document.layouts[document.activeState])); sceneLayout->setEnabled(document.sceneToolsEnabled);
     fallbackLayout->setCurrentIndex(int(document.fallback)); confirmation->setValue(document.confirmationMs);
     margin->setValue(document.ambiguityMargin*100);
-    rules->setEnabled(document.sceneToolsEnabled);
+    rules->setEnabled(document.sceneToolsEnabled && !profileSelected);
+    sceneLayout->setEnabled(document.sceneToolsEnabled && !profileSelected);
     auto crop = inspector->findChild<QPushButton*>("StudioSelectOverlaySource");
     if (crop) crop->setEnabled(document.sceneToolsEnabled);
-    QString taught=refState->currentData(Qt::UserRole+1).toString();
-    refState->clear();
-    for(int i=0;i<document.sceneCount();++i) { refState->addItem(document.sceneName(i),i); refState->setItemData(i,document.sceneIds[i],Qt::UserRole+1); }
-    int row=refState->findData(taught,Qt::UserRole+1);
-    refState->setCurrentIndex(row>=0 ? row : document.activeState);
     refreshReferences();
 }
 void StudioEditor::refreshReferences()
 {
     bool wasRefreshing = refreshing; refreshing = true;
-    int state = refState->currentData().toInt(), row = refList->currentRow();
+    int state = document.activeState, row = refList->currentRow();
     refList->clear();
     for (const auto& r : document.references[state])
         refList->addItem(QString("%1 - %2 (%3,%4 %5x%6)").arg(r.name, r.screen ? "Bottom" : "Top")
@@ -183,7 +177,7 @@ void StudioEditor::refreshReferences()
 void StudioEditor::editReference()
 {
     if (refreshing) return;
-    int state = refState->currentData().toInt(), row = refList->currentRow();
+    int state = document.activeState, row = refList->currentRow();
     if (row < 0 || row >= document.references[state].size()) return;
     auto& r = document.references[state][row];
     auto text = refName->text().trimmed(); if (text.isEmpty()) text = r.name;
@@ -221,12 +215,13 @@ void StudioEditor::applyPresentation()
         }
         if (runtimeState >= 0) {
             p.overlays=document.elements[runtimeState];
-            if(!playMode && !window->isFullScreen()) p.selected=outliner->indexOfTopLevelItem(outliner->currentItem());
+            if(!playMode && !window->isFullScreen() && runtimeState==document.activeState) p.selected=outliner->indexOfTopLevelItem(outliner->currentItem());
         }
         hudCanvas->primary = p.sizing == screenSizing_BotOnly ? 1 : 0;
     }
     else runtimeState = -2;
     window->setStudioPresentation(p); updateDebug();
+    editingStatus->setText(QString("Editing: %1\n%2: %3").arg(document.sceneName(document.activeState),document.automatic ? "Automatic runtime" : "Manual override",runtimeState>=0 ? document.sceneName(runtimeState) : "Fallback"));
 }
 void StudioEditor::updateDebug()
 {
@@ -262,14 +257,13 @@ void StudioEditor::tickScreens()
         { lastSampleMs = now; lastMatch = recognizer.update(latest,document,now); }
         else if (lastSampleMs < 0 || now-lastSampleMs > 500)
         { recognizer.reset(); lastMatch = StudioMatch{}; }
-        if (lastMatch.state >= 0 && lastMatch.state != document.activeState)
-        {
-            editElement();
-            if (document.automatic) { document.activeState = lastMatch.state; refresh(); }
-        }
         if (runtimeState == -2 || previousState != lastMatch.state) applyPresentation();
         else updateDebug();
     }
+    auto thread=window->getEmuInstance()->getEmuThread();
+    bool active=thread->emuIsActive();
+    pauseAction->setEnabled(active); resetGameAction->setEnabled(active);
+    pauseAction->setChecked(active && !thread->emuIsRunning()); pauseAction->setText(pauseAction->isChecked() ? "Resume" : "Pause");
     captureRequested.store(originals->isVisible() || hudCanvas->isVisible() || teachingPending
         || (document.sceneToolsEnabled && document.automatic));
 }
@@ -303,7 +297,7 @@ void StudioEditor::selectedRegion(int screen, const QRect& region)
     else
     {
 
-        int state = refState->currentData().toInt();
+        int state = document.activeState;
         auto name = QString("%1 reference %2").arg(document.sceneName(state)).arg(document.references[state].size()+1);
         document.references[state].append({name,screen,region,screens->images[screen].copy(region),0.96,true});
         document.dirty = true; resetRecognition(); refreshReferences(); applyPresentation();

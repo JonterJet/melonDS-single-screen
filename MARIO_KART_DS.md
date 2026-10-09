@@ -15,7 +15,7 @@ For a console-style Mario Kart setup:
    other scenes, and choose a safe unknown-state fallback.
 3. Pause and capture distinctive visual reference regions for each scene.
    Add alternatives and tune thresholds/confirmation using Recognition Debug.
-4. In Racing click Add HUD, choose Bottom Screen, and trace a polygon around the
+4. In Racing click the Outliner + (Add Widget), choose Bottom Screen, and trace a polygon around the
    map. Confirm and move/scale it using the viewport or HUD Layout. Save.
 5. Resume the game and enable automatic recognition. Enter Play for fullscreen;
    Escape or the mouse-triggered Exit button restores the editor.

@@ -26,6 +26,7 @@ class QDoubleSpinBox;
 class QMenu;
 class QPushButton;
 class QTimer;
+class QStackedWidget;
 class StudioHudCanvas;
 
 class StudioEditor : public QObject
@@ -42,6 +43,7 @@ public:
     void captureScreens(void* top, void* bottom, bool software);
     bool ownsFocus() const;
     bool isPlayMode() const { return playMode; }
+    void exitPlayMode();
     QString configurationPath() const;
 
 private:
@@ -54,6 +56,18 @@ private:
     bool viewportDrag=false, viewportResize=false;
     QPoint viewportOrigin;
     QRect viewportInitial;
+    bool profileSelected=false;
+    StudioDocument copiedProfile;
+    int copiedScene=-1, clipboardType=0;
+    StudioElement copiedWidget;
+    void profileCommand(const QString& command);
+    void widgetCommand(const QString& command);
+    void reorderProfiles();
+    void reorderWidgets();
+    void beginInlineName(bool scene);
+    QLabel* editingStatus;
+    QAction *pauseAction, *resetGameAction;
+    QWidget* transport;
     void initializeProfiles(QWidget* widget);
     void refreshProfiles();
     void chooseProfile(const QString& id, int scene=-1);
@@ -81,7 +95,10 @@ private:
     QCheckBox* enabled;
     QSpinBox* destination[4];
     QWidget* inspector;
-    QComboBox* states;
+    QStackedWidget* inspectorPages;
+    QWidget* profileInspector;
+    QLineEdit* profileName;
+    QLabel* profileDetails;
     QAction* playAction;
     QToolBar* toolbar;
     QVector<bool> fullscreenVisibility;
@@ -99,7 +116,7 @@ private:
     int runtimeState = -2;
     bool teachingPending = false, selectingOverlay = false;
     QCheckBox *marioMode, *automatic, *refEnabled;
-    QComboBox *sceneLayout, *fallbackLayout, *refState;
+    QComboBox *sceneLayout, *fallbackLayout;
     QSpinBox* confirmation;
     QDoubleSpinBox *margin, *refThreshold;
     QListWidget* refList;

@@ -14,6 +14,7 @@ public:
     bool forRom(const QString& rom, const QString& label, const QString& legacyPath, StudioDocument& doc, QString& error);
     bool duplicate(const QString& id, const QString& name, StudioDocument& doc, QString& error);
     bool remove(const QString& id, QString& error);
+    bool setOrder(const QStringList& ids, QString& error);
     bool prefer(const StudioDocument& doc, QString& error);
 private:
     QString root;

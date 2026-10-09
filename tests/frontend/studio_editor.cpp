@@ -29,6 +29,10 @@ extern const char* kScreenFS;
 #include <QTreeWidget>
 #include <QToolBar>
 #include <QStyle>
+#include <QMenu>
+#include <QToolButton>
+#include <QStackedWidget>
+#include "StudioTree.h"
 #include <iostream>
 #include <stdexcept>
 extern EmuInstance* emuInstances[];
@@ -139,11 +143,23 @@ int main(int argc, char** argv)
         require(docks.size() == 7, "Expected editor and Mario Kart tool panels");
         auto outline = window->findChild<QTreeWidget*>("StudioOutliner");
         auto name = window->findChild<QLineEdit*>("StudioElementName");
-        auto states = window->findChild<QComboBox*>("StudioSceneStates");
+        auto hierarchy=window->findChild<QTreeWidget*>("StudioProfiles");
+        struct SceneSelection {
+            QTreeWidget* tree;
+            QTreeWidgetItem* root() const { auto i=tree->currentItem(); return i->parent() ? i->parent() : i; }
+            int count() const { return root()->childCount(); }
+            int currentIndex() const { return tree->currentItem()->data(0,Qt::UserRole+1).toInt(); }
+            QString currentText() const { return tree->currentItem()->text(0); }
+            QVariant currentData() const { return tree->currentItem()->data(0,Qt::UserRole+1); }
+            int findData(int i) const { return i; }
+            void setCurrentIndex(int i) { tree->setCurrentItem(root()->child(i)); settle(); }
+        } sceneSelection{hierarchy};
+        auto states=&sceneSelection;
+        require(!window->findChild<QComboBox*>("StudioSceneStates") && !window->findChild<QComboBox*>("StudioReferenceState"),"Redundant scene dropdowns must be removed");
         auto x = window->findChild<QSpinBox*>("StudioX");
         auto width = window->findChild<QSpinBox*>("StudioWidth");
         auto click = [&](const QString& text) {
-            for (auto b : window->findChildren<QPushButton*>()) if (b->text() == (text=="Add" ? "Add live bottom-screen map to selected scene" : text)) { b->click(); return; }
+            for (auto b : window->findChildren<QPushButton*>()) if (b->text() == (text=="Add" ? "Add live bottom-screen map to selected scene" : text) || b->objectName()==(text=="Up" ? "StudioWidgetUp" : text=="Remove" ? "StudioRemoveWidget" : "none")) { b->click(); return; }
             throw std::runtime_error("Editor button missing");
         };
         editor->setGame("test-game-a", "Test Game A");
@@ -186,8 +202,8 @@ int main(int argc, char** argv)
         play->setChecked(false);
         require(!docks[0]->isVisible() && docks[1]->isVisible(), "Editor mode must restore dock visibility");
         auto toolbar = window->findChild<QToolBar*>("MelonStudio.Toolbar");
-        auto playButton=window->findChild<QWidget*>("StudioPlayButton");
-        require(playButton && std::abs(playButton->geometry().center().x()-toolbar->width()/2)<=1,"Play button must be centered");
+        auto playButton=window->findChild<QWidget*>("StudioTransport");
+        require(playButton && std::abs(playButton->geometry().center().x()-toolbar->width()/2)<=1,"Transport controls must be centered");
         window->toggleFullscreen(); settle();
         require(window->isFullScreen() && !toolbar->isVisible(), "Fullscreen must hide the editor toolbar");
         for (auto d : docks) require(!d->isVisible(), "Fullscreen must hide all editor panels");
@@ -198,7 +214,7 @@ int main(int argc, char** argv)
         play->setChecked(true); settle();
         require(window->isFullScreen() && !toolbar->isVisible(),"Play must enter clean fullscreen");
         auto exit=window->findChild<QPushButton*>("StudioExitPlay");
-        require(exit && !exit->isVisible(),"Exit Play must start hidden");
+        require(exit && !exit->isVisible() && window->panel->cursor().shape()==Qt::BlankCursor,"Exit and viewport cursor must start hidden");
         QKeyEvent ordinary(QEvent::KeyPress,Qt::Key_A,Qt::NoModifier);
         QApplication::sendEvent(window->panel,&ordinary); settle();
         require(!exit->isVisible(),"Keyboard/controller-style input must not show Exit");
@@ -209,10 +225,13 @@ int main(int argc, char** argv)
         QMouseEvent mouse(QEvent::MouseMove,QPointF(20,20),QPointF(mouseGlobal),Qt::NoButton,Qt::NoButton,Qt::NoModifier);
         QApplication::sendEvent(window->panel,&mouse); settle();
         require(exit->isVisible(),"Mouse movement must reveal Exit Play"); settle(2150);
-        require(!exit->isVisible(),"Exit Play must hide after idle timeout");
+        require(!exit->isVisible() && window->panel->cursor().shape()==Qt::BlankCursor,"Exit and cursor must hide after idle timeout");
         QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier), escapeUp(QEvent::KeyRelease,Qt::Key_Escape,Qt::NoModifier);
         QApplication::sendEvent(window->panel,&escape); QApplication::sendEvent(window->panel,&escapeUp); settle();
         require(!editor->isPlayMode() && !window->isFullScreen() && toolbar->isVisible(),"Escape must restore editor");
+        play->setChecked(true); settle();
+        QMetaObject::invokeMethod(window,"onFullscreenToggled",Qt::DirectConnection); settle();
+        require(!editor->isPlayMode() && !window->isFullScreen() && toolbar->isVisible(),"Fullscreen hotkey must safely restore editor from Play");
         docks[0]->show();
         settle(220);
         QVector<quint32> top(256 * 192, 0xffff0000), bottom(256 * 192, 0xff0000ff);
@@ -283,25 +302,75 @@ int main(int argc, char** argv)
         QApplication::sendEvent(window, &press); settle();
         require(!inst->getEmuThread()->isBottomScreenRevealed(), "Inspector typing must not trigger gameplay hotkeys");
         require(window->tabPosition(Qt::RightDockWidgetArea)==QTabWidget::North,"Dock tabs must be at the top");
-        auto answerName=[&](const QString& name) {
-            QTimer::singleShot(50,[name] { auto dialog=qobject_cast<QInputDialog*>(QApplication::activeModalWidget()); require(dialog,"Expected name dialog"); dialog->setTextValue(name); dialog->accept(); });
+        auto tree=window->findChild<QTreeWidget*>("StudioProfiles"); require(tree,"Profiles hierarchy missing");
+        auto button=[&](const char* id) { auto b=window->findChild<QPushButton*>(id); require(b,"Profile button missing"); b->click(); settle(); };
+        auto inlineName=[&](QTreeWidget* tree,const QString& text,bool cancel=false) {
+            auto field=tree->findChild<QLineEdit*>(); require(field && field->isVisible(),"Expected inline name editor"); field->setText(text);
+            QKeyEvent key(QEvent::KeyPress,cancel ? Qt::Key_Escape : Qt::Key_Return,Qt::NoModifier); QApplication::sendEvent(field,&key); settle();
         };
-        auto button=[&](const char* id) { auto b=window->findChild<QPushButton*>(id); require(b,"Profile button missing"); b->click(); };
-        answerName("Custom racing profile"); button("StudioNewProfile");
+        auto contextMenu=[&](QTreeWidget* tree,const QString& command) {
+            QTimer::singleShot(20,[command] {
+                auto menu=qobject_cast<QMenu*>(QApplication::activePopupWidget()); require(menu,"Expected hierarchy context menu");
+                bool found=false; for(auto action:menu->actions()) if(action->text()==command) { require(action->isEnabled(),"Context action disabled"); action->trigger(); found=true; break; }
+                require(found,"Context action missing"); menu->close();
+            });
+            QMetaObject::invokeMethod(tree,"customContextMenuRequested",Qt::DirectConnection,Q_ARG(QPoint,tree->visualItemRect(tree->currentItem()).center())); settle();
+        };
+        button("StudioNewProfile"); inlineName(tree,"Custom racing profile");
         require(states->count()==3 && outline->topLevelItemCount()==0,"New profile must have independent scenes");
-        answerName("Credits custom scene"); button("StudioAddScene");
+        button("StudioAddScene"); inlineName(tree,"Credits custom scene");
         int customRow=states->currentIndex(); require(states->currentText()=="Credits custom scene","Create custom scene");
-        answerName("Renamed credits"); button("StudioRenameScene"); require(states->currentText()=="Renamed credits","Scene rename UI");
-        button("StudioDuplicateScene"); require(states->count()==5,"Scene duplicate UI");
-        button("StudioSceneUp"); require(states->currentIndex()==customRow,"Scene reorder UI");
-        QTimer::singleShot(50,[] { auto box=qobject_cast<QMessageBox*>(QApplication::activeModalWidget()); require(box,"Expected delete dialog"); box->button(QMessageBox::Yes)->click(); });
-        button("StudioDeleteScene"); require(states->count()==4,"Scene delete UI");
-        answerName("Duplicated profile"); button("StudioDuplicateProfile");
-        answerName("Renamed profile"); button("StudioRenameProfile");
+        auto doubleClickName=[&](QTreeWidget* tree) {
+            auto point=tree->visualItemRect(tree->currentItem()).center();
+            QMouseEvent event(QEvent::MouseButtonDblClick,QPointF(point),QPointF(tree->viewport()->mapToGlobal(point)),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+            QMouseEvent press(QEvent::MouseButtonPress,QPointF(point),QPointF(tree->viewport()->mapToGlobal(point)),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+            QMouseEvent release(QEvent::MouseButtonRelease,QPointF(point),QPointF(tree->viewport()->mapToGlobal(point)),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+            QApplication::sendEvent(tree->viewport(),&press); QApplication::sendEvent(tree->viewport(),&release);
+            QApplication::sendEvent(tree->viewport(),&event); QApplication::sendEvent(tree->viewport(),&release); settle();
+        };
+        doubleClickName(tree); inlineName(tree,"Renamed credits"); require(states->currentText()=="Renamed credits","Scene double-click inline rename UI");
+        contextMenu(tree,"Rename"); inlineName(tree,"Cancelled name",true); require(states->currentText()=="Renamed credits","Escape cancels rename");
+        contextMenu(tree,"Duplicate"); require(states->count()==5,"Scene duplicate UI");
+        button("StudioProfileUp"); require(states->currentIndex()==customRow,"Scene reorder UI");
+        contextMenu(tree,"Copy"); contextMenu(tree,"Paste"); require(states->count()==6,"Scene clipboard paste UI");
+        QTimer::singleShot(60,[] { auto box=qobject_cast<QMessageBox*>(QApplication::activeModalWidget()); require(box,"Expected delete dialog"); box->button(QMessageBox::Yes)->click(); });
+        button("StudioDeleteItem"); require(states->count()==5,"Scene delete UI");
+        tree->setCurrentItem(tree->currentItem()->parent()); settle();
+        require(window->findChild<QLineEdit*>("StudioProfileName")->isVisible() && !name->isVisible(),"Profile selection must show profile Inspector");
+        contextMenu(tree,"Duplicate"); contextMenu(tree,"Rename"); inlineName(tree,"Renamed profile");
         require(editor->saveOnClose(),"Named profile save");
         StudioDocument named; require(named.load(editor->configurationPath(),error) && named.gameLabel=="Renamed profile","Named profile persistence");
-        QTimer::singleShot(50,[] { auto box=qobject_cast<QMessageBox*>(QApplication::activeModalWidget()); require(box,"Expected profile delete dialog"); box->button(QMessageBox::Yes)->click(); });
-        button("StudioDeleteProfile");
+        QTimer::singleShot(60,[] { auto box=qobject_cast<QMessageBox*>(QApplication::activeModalWidget()); require(box,"Expected profile delete dialog"); box->button(QMessageBox::Yes)->click(); });
+        button("StudioDeleteItem");
+        // Widget menus and drag ordering invoke production handlers, not a model-only stand-in.
+        button("StudioNewProfile"); inlineName(tree,"Widget operations profile");
+        states->setCurrentIndex(0); click("Add");
+        doubleClickName(outline); inlineName(outline,"Inline widget");
+        require(outline->currentItem()->text(0)=="Inline widget","Widget inline rename");
+        require(editor->saveOnClose(),"Widget identity save");
+        StudioDocument widgetBefore; require(widgetBefore.load(editor->configurationPath(),error),"Read widget identity");
+        auto originalWidgetId=widgetBefore.elements[0][0].id;
+        contextMenu(outline,"Duplicate"); contextMenu(outline,"Copy"); contextMenu(outline,"Paste");
+        require(outline->topLevelItemCount()==3,"Widget independent duplicate/copy/paste");
+        contextMenu(outline,"Hide/Show");
+        StudioDocument widgetAfter; require(widgetAfter.load(editor->configurationPath(),error),"Read pasted widgets");
+        require(widgetAfter.elements[0][0].id==originalWidgetId && widgetAfter.elements[0][1].id!=originalWidgetId && widgetAfter.elements[0][2].id!=widgetAfter.elements[0][1].id,"Widget copies must have independent IDs");
+        require(!widgetAfter.elements[0][2].enabled,"Hide widget must persist without stale Inspector overwrites");
+        auto widgets=static_cast<StudioTree*>(outline); auto lastId=outline->topLevelItem(2)->data(0,Qt::UserRole).toString();
+        require(widgets->moveRelative(outline->topLevelItem(2),outline->topLevelItem(0),true),"Widget drag ordering handler"); settle();
+        require(outline->topLevelItem(0)->data(0,Qt::UserRole).toString()==lastId,"Widget drag order UI refresh");
+        require(widgetAfter.load(editor->configurationPath(),error) && widgetAfter.elements[0][0].id==lastId,"Widget drag order must persist");
+        contextMenu(outline,"Delete"); require(outline->topLevelItemCount()==2,"Widget menu deletion");
+        auto profilesTree=static_cast<StudioTree*>(tree); auto sceneRoot=tree->currentItem()->parent();
+        auto sceneLastId=sceneRoot->child(sceneRoot->childCount()-1)->data(0,Qt::UserRole+2).toString();
+        require(!profilesTree->moveRelative(sceneRoot->child(0),tree->topLevelItem(0),true),"Drag must reject cross-profile ownership changes");
+        require(profilesTree->moveRelative(sceneRoot->child(sceneRoot->childCount()-1),sceneRoot->child(0),true),"Scene drag ordering handler"); settle();
+        require(named.load(editor->configurationPath(),error) && named.sceneIds[0]==sceneLastId,"Scene drag ordering must preserve identities and persist");
+        tree->setCurrentItem(tree->currentItem()->parent()); settle();
+        auto profileId=tree->currentItem()->data(0,Qt::UserRole).toString();
+        if(tree->currentItem()!=tree->topLevelItem(0)) { require(profilesTree->moveRelative(tree->currentItem(),tree->topLevelItem(0),true),"Profile drag handler"); settle(); }
+        StudioProfiles orderedStore(QFileInfo(editor->configurationPath()).absolutePath());
+        require(orderedStore.list().first().id==profileId,"Profile drag order persistence");
         // Vertex tracing uses native source coordinates independent of widget scale.
         StudioPolygon polygon; polygon.resize(800,600); polygon.image=QImage(256,192,QImage::Format_RGB32); polygon.image.fill(Qt::blue);
         auto polygonRect=polygon.canvasRect();
@@ -320,7 +389,6 @@ int main(int argc, char** argv)
         editor->setGame("mkds-synthetic", "Mario Kart DS synthetic test");
         auto mario=window->findChild<QCheckBox*>("StudioSceneToolsEnabled");
         auto automatic=window->findChild<QCheckBox*>("StudioAutomaticRecognition");
-        auto refState=window->findChild<QComboBox*>("StudioReferenceState");
         auto references=window->findChild<QListWidget*>("StudioReferences");
         auto debug=window->findChild<QLabel*>("StudioRecognitionDebug");
         auto screens=static_cast<StudioScreensWidget*>(preview);
@@ -341,7 +409,7 @@ int main(int argc, char** argv)
             do { editor->captureScreens(pixels.data(),bottom.data(),true); settle(110); } while(timer.elapsed()<ms);
         };
         auto teach=[&](int state,quint32 color,int screen) {
-            refState->setCurrentIndex(refState->findData(state)); feed(color,220);
+            states->setCurrentIndex(states->findData(state)); require(states->currentData().toInt()==state,"Recognition must follow hierarchy scene"); feed(color,220);
             screens->selecting=true; auto r=screens->screenRect(screen);
             drag(screens,r.topLeft()+QPoint(r.width()/4,r.height()/4),r.topLeft()+QPoint(r.width()/2,r.height()/2));
             require(references->count()>0,"Region teaching failed");
@@ -375,7 +443,11 @@ int main(int argc, char** argv)
         automatic->setChecked(true); feed(0xff00ff00,700);
         require(automatic->isChecked() && debug->text().contains("Active: Racing"),"Automatic racing confirmation failed");
         require(window->panel->minimumSize()==QSize(256,192),"Racing top-screen override failed");
-        QMetaObject::invokeMethod(states,"activated",Qt::DirectConnection,Q_ARG(int,states->currentIndex()));
+        states->setCurrentIndex(StudioLegacyMarioFirst); feed(0xff00ff00,400);
+        require(automatic->isChecked() && states->currentIndex()==StudioLegacyMarioFirst && debug->text().contains("Active: Racing"),"Runtime detection must not steal editing selection");
+        require(references->count()==2 && outline->topLevelItemCount()==0,"All scene tools must follow editing selection");
+        states->setCurrentIndex(StudioLegacyRacing);
+        window->findChild<QPushButton*>("StudioManualOverride")->click();
         require(!automatic->isChecked(),"Choosing current scene must manually override detection");
         automatic->setChecked(true); feed(0xff00ff00,700);
         play->setChecked(true); settle(); feed(0xffff0000,700);
@@ -384,7 +456,9 @@ int main(int argc, char** argv)
         require(debug->text().contains("Active: Unknown - fallback layout"),"Unknown must use fallback");
         play->setChecked(false); settle();
         states->setCurrentIndex(states->findData(StudioLegacyRacing));
-        require(!automatic->isChecked() && debug->text().contains("Manual override"),"Scene selection must override detection");
+        require(automatic->isChecked(),"Editor selection must preserve automatic recognition");
+        window->findChild<QPushButton*>("StudioManualOverride")->click();
+        require(!automatic->isChecked() && debug->text().contains("Manual override"),"Explicit preview must override detection");
         require(outline->topLevelItemCount()==1,"Scene map was not restored");
         require(editor->saveOnClose(),"Mario profile save failed");
         QString marioPath=editor->configurationPath(); StudioDocument marioDocument; marioDocument.gameId="mkds-synthetic";
@@ -432,7 +506,28 @@ int main(int argc, char** argv)
         require(window->size()==savedSize && originalDock->isFloating() && originalDock->size()==floatingSize && !outlinerDock->isVisible(),"Saved geometry/floating dock size/visibility must survive reopening");
         auto floatingBefore=originalDock->geometry(); editor->setGame("workspace-switch","Game switch"); settle();
         require(originalDock->isFloating() && originalDock->geometry()==floatingBefore,"Changing games must not reset workspace");
-        std::cout << "Named profile/scene operations, polygon tracing/vertices, viewport transforms, top tabs, Play/Escape/mouse timeout and persisted workspace passed\n";
+        if(!dsi) {
+            // Asset-free DS console exercises the real EmuThread controls. This is
+            // not a claim to have booted/tested a retail ROM or DSi firmware.
+            auto thread=inst->getEmuThread(); int resets=0;
+            QObject::connect(thread,&EmuThread::windowEmuReset,editor,[&] { ++resets; });
+            thread->emuReset(); thread->emuPause(); settle(220);
+            auto pauseButton=window->findChild<QToolButton*>("StudioPauseButton");
+            auto resetButton=window->findChild<QToolButton*>("StudioResetGameButton");
+            auto gamePlay=window->findChild<QToolButton*>("StudioPlayButton");
+            require(pauseButton->isEnabled() && pauseButton->defaultAction()->isChecked(),"Toolbar must reflect paused emulation");
+            pauseButton->click(); settle(220); require(thread->emuIsRunning() && !pauseButton->defaultAction()->isChecked(),"Pause toolbar must resume real thread");
+            pauseButton->click(); settle(220); require(!thread->emuIsRunning() && pauseButton->defaultAction()->isChecked(),"Pause toolbar must pause real thread");
+            gamePlay->click(); settle(220); require(editor->isPlayMode() && window->isFullScreen() && thread->emuIsRunning(),"Play button must resume emulation and fullscreen");
+            QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier); QApplication::sendEvent(window->panel,&escape); settle();
+            require(!editor->isPlayMode() && thread->emuIsRunning(),"Exit Play must keep emulation running");
+            QString preservedPath=editor->configurationPath(); require(editor->saveOnClose(),"Pre-reset profile save");
+            StudioDocument preserved; require(preserved.load(preservedPath,error),"Pre-reset read"); auto preservedJson=preserved.toJson();
+            resetButton->click(); settle(220); require(resets==2 && thread->emuIsRunning(),"Reset toolbar must dispatch existing reset operation");
+            require(editor->configurationPath()==preservedPath && preserved.load(preservedPath,error) && preserved.toJson()==preservedJson,"Reset must preserve profiles");
+            thread->emuStop(true); settle();
+        }
+        std::cout << "Inline profile/scene/widget naming, copy/paste/duplicate/menu operations, drag handlers, editing/runtime isolation, transport controls and workspace persistence passed\n";
         std::cout << (dsi ? "DSi" : "DS") << ": editor panels, Inspector, ordering, scenes, mode toggle/fullscreen, per-game persistence, validation, software/OpenGL screen previews, input isolation passed\n";
     }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; result = 1; }

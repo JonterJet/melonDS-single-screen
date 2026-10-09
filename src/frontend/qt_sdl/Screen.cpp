@@ -62,6 +62,7 @@ const int kLogoWidth = 192;
 
 ScreenPanel::ScreenPanel(QWidget* parent) : QWidget(parent)
 {
+    setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
     setAttribute(Qt::WA_AcceptTouchEvents);
 
@@ -812,6 +813,7 @@ void ScreenPanelNative::drawScreen()
 
     bufferLock.lock();
     hasBuffers = nds->GPU.GetFramebuffers(&topBuffer, &bottomBuffer);
+    if (hasBuffers) mainWindow->captureStudioScreens(topBuffer, bottomBuffer, true);
     bufferLock.unlock();
 }
 
@@ -1154,6 +1156,7 @@ void ScreenPanelGL::drawScreen()
         void* topbuf; void* bottombuf;
         if (nds->GPU.GetFramebuffers(&topbuf, &bottombuf))
         {
+            mainWindow->captureStudioScreens(topbuf, bottombuf, true);
             // if we're doing a regular render, use the provided framebuffers
             // otherwise, GetFramebuffers() will set up the required state
 
@@ -1167,6 +1170,7 @@ void ScreenPanelGL::drawScreen()
         }
         else
         {
+            mainWindow->captureStudioScreens(topbuf, bottombuf, false);
             GLuint texid = *(GLuint*)topbuf;
 
             glActiveTexture(GL_TEXTURE0);

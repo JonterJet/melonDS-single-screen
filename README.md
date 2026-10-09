@@ -1,3 +1,9 @@
+## MelonStudio
+
+This fork includes a basic Qt 6 game editor with a live viewport, original-screen
+previews, Outliner, Inspector, Scene States, and per-game profiles. See
+[MELONSTUDIO.md](MELONSTUDIO.md) for controls, Windows downloads, and verification.
+
 <p align="center"><img src="https://raw.githubusercontent.com/melonDS-emu/melonDS/master/res/icon/melon_128x128.png"></p>
 <h2 align="center"><b>melonDS</b></h2>
 <p align="center">

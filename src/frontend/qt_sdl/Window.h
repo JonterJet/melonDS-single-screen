@@ -40,6 +40,7 @@
 
 class EmuInstance;
 class EmuThread;
+class StudioEditor;
 
 const int kMaxRecentROMs = 10;
 
@@ -70,6 +71,7 @@ public:
     void releaseGL();
 
     void drawScreen();
+    void captureStudioScreens(void* top, void* bottom, bool software);
 
     bool preloadROMs(QStringList file, QStringList gbafile, bool boot);
     QStringList splitArchivePath(const QString& filename, bool useMemberSyntax);
@@ -188,6 +190,7 @@ private slots:
 private:
     virtual void closeEvent(QCloseEvent* event) override;
 
+    StudioEditor* studio = nullptr;
     QStringList currentROM;
     QStringList currentGBAROM;
     QList<QString> recentFileList;

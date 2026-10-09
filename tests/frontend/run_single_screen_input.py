@@ -2,6 +2,7 @@
 """Run frontend integration tests against an existing Linux Ninja development build.
 
 Usage: python3 tests/frontend/run_single_screen_input.py build/cloud
+Add --studio to run the basic editor integration suite.
 Requires compile_commands.json, GNU objcopy, Qt/SDL runtime libraries, and an X
 session (or xvfb-run). Reuses production objects; source files are not modified.
 """
@@ -11,6 +12,7 @@ import shlex
 import subprocess
 import sys
 
+studio = '--studio' in sys.argv
 repo = Path(__file__).resolve().parents[2]
 build = Path(sys.argv[1] if len(sys.argv) > 1 else repo / 'build/cloud').resolve()
 subprocess.run(['cmake', '--build', str(build), '--target', 'melonDS', '--parallel', '5'], check=True)
@@ -22,7 +24,7 @@ test_dir = build / 'single-screen-tests'
 test_dir.mkdir(exist_ok=True)
 test_object = test_dir / 'input.o'
 args[args.index('-o') + 1] = str(test_object)
-args[args.index('-c') + 1] = str(repo / 'tests/frontend/single_screen_input.cpp')
+args[args.index('-c') + 1] = str(repo / ('tests/frontend/studio_editor.cpp' if studio else 'tests/frontend/single_screen_input.cpp'))
 subprocess.run(args, cwd=entry['directory'], check=True)
 original_main = Path(entry['directory']) / output
 renamed_main = test_dir / 'application-main.o'

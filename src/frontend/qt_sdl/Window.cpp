@@ -73,6 +73,8 @@
 #include "ArchiveUtil.h"
 #include "CameraManager.h"
 #include "Window.h"
+#include "StudioEditor.h"
+#include <QCryptographicHash>
 #include "AboutDialog.h"
 
 using namespace melonDS;
@@ -221,7 +223,7 @@ MainWindow::MainWindow(int id, EmuInstance* inst, QWidget* parent) :
 
     showOSD = windowCfg.GetBool("ShowOSD");
 
-    setWindowTitle("melonDS " MELONDS_VERSION);
+    setWindowTitle("MelonStudio - melonDS " MELONDS_VERSION);
     setAttribute(Qt::WA_DeleteOnClose);
     setAcceptDrops(true);
     setFocusPolicy(Qt::ClickFocus);
@@ -661,6 +663,10 @@ MainWindow::MainWindow(int id, EmuInstance* inst, QWidget* parent) :
 
     panel = nullptr;
     createScreenPanel();
+    if (windowID == 0) studio = new StudioEditor(this);
+    connect(qApp, &QApplication::focusChanged, this, [this](QWidget*, QWidget*) {
+        if (emuInstance && studio && studio->ownsFocus()) emuInstance->keyReleaseAll();
+    });
 
     if (hasMenu)
     {
@@ -754,6 +760,7 @@ MainWindow::MainWindow(int id, EmuInstance* inst, QWidget* parent) :
     onUpdateInterfaceSettings();
 
     updateMPInterface(MPInterface::GetType());
+    panel->setFocus(Qt::OtherFocusReason);
 }
 
 MainWindow::~MainWindow()
@@ -780,6 +787,7 @@ void MainWindow::saveEnabled(bool enabled)
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    if (studio && !studio->saveOnClose()) { event->ignore(); return; }
     if (emuInstance)
     {
         if (windowID == 0)
@@ -924,8 +932,14 @@ void MainWindow::drawScreen()
     return panel->drawScreen();
 }
 
+void MainWindow::captureStudioScreens(void* top, void* bottom, bool software)
+{
+    if (studio) studio->captureScreens(top, bottom, software);
+}
+
 void MainWindow::keyPressEvent(QKeyEvent* event)
 {
+    if (studio && studio->ownsFocus()) { QMainWindow::keyPressEvent(event); return; }
     if (event->isAutoRepeat()) return;
 
     // TODO!! REMOVE ME IN RELEASE BUILDS!!
@@ -1294,10 +1308,21 @@ void MainWindow::updateCartInserted(bool gba)
     {
         inserted = emuInstance->cartInserted();
         label = "DS slot: " + emuInstance->cartLabel();
+        QString gameId = emuInstance->getConsoleType() == 1 ? "firmware-dsi" : "firmware-ds";
+        QString gameLabel = "Firmware / no cartridge";
+        if (inserted)
+        {
+            auto cart = emuInstance->getNDS()->NDSCartSlot.GetCart();
+            gameId = QString::fromLatin1(QCryptographicHash::hash(
+                QByteArray::fromRawData(reinterpret_cast<const char*>(cart->GetROM()), cart->GetROMLength()),
+                QCryptographicHash::Sha256).toHex());
+            gameLabel = emuInstance->cartLabel();
+        }
 
         emuInstance->doOnAllWindows([=](MainWindow* win)
         {
             if (!win->hasMenu) return;
+            if (win->studio) win->studio->setGame(gameId, gameLabel);
             win->actCurrentCart->setText(label);
             win->actEjectCart->setEnabled(inserted);
             win->actImportSavefile->setEnabled(inserted);
@@ -2153,7 +2178,7 @@ void MainWindow::onTitleUpdate(QString title)
         title = prefix + title;
     }
 
-    setWindowTitle(title);
+    setWindowTitle("MelonStudio - " + title);
 }
 
 void MainWindow::toggleFullscreen()
@@ -2229,6 +2254,7 @@ void MainWindow::onEmuStart()
 
 void MainWindow::onEmuStop()
 {
+    if (studio) studio->clearScreens();
     if (!hasMenu) return;
 
     for (int i = 0; i < 9; i++)

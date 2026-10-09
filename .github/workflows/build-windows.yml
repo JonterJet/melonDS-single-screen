@@ -28,6 +28,7 @@ jobs:
 
     name: ${{ matrix.arch.name }}
     runs-on: ${{ matrix.arch.image }}
+    timeout-minutes: 90
     env:
       VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg_cache,readwrite
     steps:
@@ -48,7 +49,7 @@ jobs:
       uses: lukka/run-cmake@v10
       with:
         configurePreset: release-windows-${{ matrix.arch.name }}
-        configurePresetAdditionalArgs: "['-DENABLE_DEBUG_DEPS=OFF', '-DMELONDS_EMBED_BUILD_INFO=ON']"
+        configurePresetAdditionalArgs: "['-DENABLE_DEBUG_DEPS=OFF', '-DUSE_QT6=ON', '-DMELONDS_EMBED_BUILD_INFO=ON']"
         buildPreset: release-windows-${{ matrix.arch.name }}
     # Do not launch the GUI executable in CI: --help can wait for UI interaction.
     # Upload immediately after compilation; test the downloaded build manually.

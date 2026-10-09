@@ -7,6 +7,10 @@ set(SOURCES_QT_SDL
     main_shaders.h
     Screen.cpp
     Window.cpp
+    StudioEditor.cpp
+    StudioEditor.h
+    StudioDocument.cpp
+    StudioDocument.h
     EmuInstance.cpp
     EmuInstanceAudio.cpp
     EmuInstanceInput.cpp

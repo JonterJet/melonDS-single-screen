@@ -3,6 +3,7 @@
 
 Usage: python3 tests/frontend/run_single_screen_input.py build/cloud
 Add --studio to run the basic editor integration suite.
+The editor suite uses libX11/libXtst for actual platform drag/drop gestures.
 Requires compile_commands.json, GNU objcopy, Qt/SDL runtime libraries, and an X
 session (or xvfb-run). Reuses production objects; source files are not modified.
 """
@@ -40,5 +41,6 @@ link[link.index('-o') + 1] = str(test_dir / 'input-test')
 link = [str(renamed_main) if (build / arg).resolve() == original_main.resolve() else arg for arg in link]
 link.insert(link.index('-o'), str(test_object))
 subprocess.run(link, cwd=build, check=True)
+if '--build-only' in sys.argv: sys.exit(0)
 for mode in ([], ['--dsi']):
     subprocess.run([str(test_dir / 'input-test'), *mode], cwd=build, check=True, timeout=60)

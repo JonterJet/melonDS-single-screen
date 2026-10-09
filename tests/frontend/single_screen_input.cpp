@@ -1,6 +1,8 @@
 // Integration test using the production frontend, an SDL virtual controller,
 // and the real paused emulation thread; no game or BIOS assets are required.
 #include "main.h"
+#include "StudioEditor.h"
+#include <QPushButton>
 #include <QKeyEvent>
 #include <QTemporaryDir>
 #include <QStyle>
@@ -52,13 +54,14 @@ int main(int argc, char** argv)
     app.setQuitOnLastWindowClosed(false);
     QTemporaryDir config;
     require(config.isValid(), "Temporary config directory unavailable");
+    qputenv("XDG_CONFIG_HOME",(config.path()+"/config").toUtf8());
     emuDirectory = config.path();
     QString theme = QApplication::style()->objectName();
     systemThemeName = &theme;
     sysTimer.start();
     require(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK) == 0, SDL_GetError());
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
-    int device = SDL_JoystickAttachVirtual(SDL_JOYSTICK_TYPE_GAMECONTROLLER, 0, 2, 0);
+    int device = SDL_JoystickAttachVirtual(SDL_JOYSTICK_TYPE_GAMECONTROLLER, 2, 2, 0);
     require(device >= 0, "SDL virtual controller unavailable");
     SDL_Joystick* joystick = SDL_JoystickOpen(device);
     require(joystick != nullptr, SDL_GetError());
@@ -115,6 +118,40 @@ int main(int argc, char** argv)
                 require(!native.isTouching() && !gl.isTouching(), "Hidden touchscreen stayed pressed");
                 ++cases;
             }
+            // A scene override must reveal bottom even when saved View sizing is dual-screen.
+            cfg.SetInt("ScreenSizing", screenSizing_Even); native.reload(); gl.reload();
+            StudioPresentation presentation; presentation.sizing=screenSizing_TopOnly;
+            StudioElement map; presentation.overlays.append(map);
+            native.setStudioPresentation(presentation); gl.setStudioPresentation(presentation);
+            require(native.displays(0) && gl.displays(0), "Scene top override failed");
+            press(true);
+            await([&] { return native.displays(1) && gl.displays(1); }, "Scene override lost controller reveal");
+            require(cfg.GetInt("ScreenSizing")==screenSizing_Even,"Scene override modified saved layout");
+            native.beginTouch(); gl.beginTouch(); press(false);
+            await([&] { return native.displays(0) && gl.displays(0); }, "Scene reveal release failed");
+            require(!native.isTouching() && !gl.isTouching(),"Scene override left hidden touch pressed");
+            presentation.sizing=screenSizing_BotOnly; native.setStudioPresentation(presentation); gl.setStudioPresentation(presentation);
+            require(native.displays(1) && gl.displays(1),"Scene bottom override failed");
+            presentation.sizing=screenSizing_Even; native.setStudioPresentation(presentation); gl.setStudioPresentation(presentation);
+            require(native.count()==3 && gl.count()==3,"Scene Both override lost Hybrid");
+            native.setStudioPresentation({}); gl.setStudioPresentation({});
+            cfg.SetInt("ScreenSizing",screenSizing_TopOnly); native.reload(); gl.reload(); ++cases;
+            // Ordinary physical-controller events must not expose Play's mouse-only Exit control.
+            auto editor=window->findChild<StudioEditor*>(); QAction* play=nullptr;
+            for(auto action:window->findChildren<QAction*>()) if(action->text()=="Play") play=action;
+            require(editor && play,"Play controls unavailable"); play->setChecked(true); QApplication::processEvents();
+            auto exit=window->findChild<QPushButton*>("StudioExitPlay");
+            press(true); await([&] { return thread->isBottomScreenRevealed(); },"Controller reveal must work in Play");
+            require(editor->isPlayMode() && exit && !exit->isVisible(),"Gamepad button must not reveal Exit Play");
+            SDL_LockMutex(inst->getJoyMutex().get());
+            int axisResult=SDL_JoystickSetVirtualAxis(joystick,0,16384);
+            SDL_UnlockMutex(inst->getJoyMutex().get()); require(axisResult==0,SDL_GetError());
+            QThread::msleep(150); QApplication::processEvents();
+            require(editor->isPlayMode() && !exit->isVisible(),"Ordinary gamepad movement must not reveal Exit Play");
+            SDL_LockMutex(inst->getJoyMutex().get()); SDL_JoystickSetVirtualAxis(joystick,0,0); SDL_UnlockMutex(inst->getJoyMutex().get());
+
+            press(false); await([&] { return !thread->isBottomScreenRevealed(); },"Play reveal release");
+            require(!exit->isVisible(),"Gamepad release must not reveal Exit Play"); play->setChecked(false); ++cases;
             // Both bindings contribute to the held state; releasing one must
             // not hide the bottom screen while the other remains pressed.
             QKeyEvent keyDown(QEvent::KeyPress, Qt::Key_F9, Qt::NoModifier);

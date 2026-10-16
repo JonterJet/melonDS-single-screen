@@ -873,6 +873,7 @@ void MainWindow::createScreenPanel()
 
     connect(this, SIGNAL(screenLayoutChange()), panel, SLOT(onScreenLayoutChanged()));
     emit screenLayoutChange();
+    panel->setStudioPresentation(studioPresentation);
 }
 
 GL::Context* MainWindow::getOGLContext()
@@ -931,6 +932,15 @@ void MainWindow::drawScreen()
     if (!panel) return;
     return panel->drawScreen();
 }
+
+void MainWindow::setStudioPresentation(const StudioPresentation& p)
+{
+    studioPresentation = p;
+    if (panel) panel->setStudioPresentation(p);
+}
+
+void MainWindow::studioPause(bool pause) { onPause(pause); }
+void MainWindow::studioReleaseKeys() { if(emuInstance) emuInstance->keyReleaseAll(); }
 
 void MainWindow::captureStudioScreens(void* top, void* bottom, bool software)
 {
@@ -1687,6 +1697,7 @@ void MainWindow::onReset()
 {
     if (!emuThread->emuIsActive()) return;
 
+    pausedManually = false;
     emuThread->emuReset();
 }
 
@@ -2185,6 +2196,7 @@ void MainWindow::toggleFullscreen()
 {
     if (!isFullScreen())
     {
+        if(studio) studio->prepareFullscreen();
         showFullScreen();
         if (studio) studio->setFullscreen(true);
         if (hasMenu)
@@ -2196,14 +2208,16 @@ void MainWindow::toggleFullscreen()
         if (studio) studio->setFullscreen(false);
         if (hasMenu)
         {
-            int menuBarHeight = menuBar()->sizeHint().height();
-            menuBar()->setFixedHeight(menuBarHeight);
+            menuBar()->setMinimumHeight(0);
+            menuBar()->setMaximumHeight(QWIDGETSIZE_MAX);
+            menuBar()->updateGeometry();
         }
     }
 }
 
 void MainWindow::onFullscreenToggled()
 {
+    if(studio && studio->isPlayMode()) { studio->exitPlayMode(); return; }
     toggleFullscreen();
 }
 
@@ -2286,8 +2300,11 @@ void MainWindow::onEmuPause(bool pause)
 
 void MainWindow::onEmuReset()
 {
+    const bool running = emuThread->emuIsRunning();
+    if (running) pausedManually = false;
     if (!hasMenu) return;
 
+    actPause->setChecked(emuThread->emuIsActive() && !running);
     actUndoStateLoad->setEnabled(false);
 }
 

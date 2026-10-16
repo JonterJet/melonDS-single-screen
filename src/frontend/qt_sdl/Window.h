@@ -72,6 +72,10 @@ public:
 
     void drawScreen();
     void captureStudioScreens(void* top, void* bottom, bool software);
+    void setStudioPresentation(const StudioPresentation& presentation);
+    void studioPause(bool pause);
+    void studioReset() { onReset(); }
+    void studioReleaseKeys();
 
     bool preloadROMs(QStringList file, QStringList gbafile, bool boot);
     QStringList splitArchivePath(const QString& filename, bool useMemberSyntax);
@@ -191,6 +195,7 @@ private:
     virtual void closeEvent(QCloseEvent* event) override;
 
     StudioEditor* studio = nullptr;
+    StudioPresentation studioPresentation;
     QStringList currentROM;
     QStringList currentGBAROM;
     QList<QString> recentFileList;

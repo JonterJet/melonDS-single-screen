@@ -48,6 +48,9 @@ void main()
 const char* kScreenFS = R"(#version 140
 
 uniform sampler2DArray ScreenTex;
+uniform sampler2D StudioMask;
+uniform bool uMasked;
+uniform bool uSelection;
 
 smooth in vec3 fTexcoord;
 
@@ -57,7 +60,8 @@ void main()
 {
     vec4 pixel = texture(ScreenTex, fTexcoord);
 
-    oColor = vec4(pixel.rgb, 1.0);
+    float alpha=uMasked ? texture(StudioMask,fTexcoord.xy).r : 1.0;
+    oColor = uSelection ? vec4(1.0,0.9,0.0,1.0) : vec4(pixel.rgb,alpha);
 }
 )";
 

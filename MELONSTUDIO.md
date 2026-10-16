@@ -166,7 +166,11 @@ Docks, toolbar and editing handles disappear, while the current layout, live HUD
 recognition and emulation continue. Play resumes a paused active console. The
 centered transport also offers **Pause/Resume** (using the real thread state) and
 **Reset game** (the existing melonDS reset, retaining save data and profiles).
-Gamepad and keyboard gameplay input remain available.
+Gamepad and keyboard gameplay input remain available. Transport controls are
+registered in the toolbar layout rather than manually overlaid. They disable
+when no console is active, and Pause/Resume text, icon and checked state follow
+the actual emulation state (including changes from menus/hotkeys). Reset clears
+the old manual-pause state and synchronizes the System menu too.
 
 **Escape** returns to the editor. The existing fullscreen hotkey also exits Play
 through the same restoration path. The Escape press and release are consumed by
@@ -200,7 +204,10 @@ The editor suite also requires libX11 and libXtst/XTest for real drag gestures.
 Coverage includes profile/scene/widget inline creation and renaming, cancellation,
 context-menu copy/paste/duplicate/delete/hide, real X11 drag/drop gestures and
 persisted sibling ordering,
-editing/runtime scene isolation, asset-free DS thread Pause/Play/Reset,
+editing/runtime scene isolation, native X11 pointer clicks on Play/Pause/Reset,
+Save/Load and resized toolbars, native Escape/fullscreen restoration, and a
+generated DS cartridge that verifies pause/resume RAM progress, reset execution,
+loaded SRAM and save/profile/ROM file preservation,
 reordering, dynamic recognition, v1/v2 migration, PNG/profile round trips, polygon
 alpha generation, native/production-GL live mask pixels and scaling, vertex
 tracing/movement/undo, viewport and HUD-canvas transforms, Play/Escape, mouse Exit
@@ -213,7 +220,11 @@ Mario Kart DS copy; confirm live HUD movement/transparency under software and
 OpenGL, fullscreen, high DPI/multiple monitors, your physical controller and
 bottom reveal; train and validate each intended menu, selection, race, pause and
 results transition. No real-ROM recognition accuracy is claimed by the synthetic
-suite. Your screenshot is an interface reference, not a supplied ROM.
+suite. The generated transport-test cartridge is original test code, not a
+commercial game. GUI mouse/keyboard tests run on Linux/X11 under Xvfb. Windows
+CI verifies compilation and bounded headless tests; real Windows mouse,
+decoration, DPI and hardware-controller interaction is not tested in CI.
+Your screenshot is an interface reference, not a supplied ROM.
 
 ## UX overhaul delivery scope
 

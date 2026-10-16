@@ -36,6 +36,7 @@
 #include <cstring>
 #include <QSignalBlocker>
 #include <QStackedWidget>
+#include <QGridLayout>
 
 QDockWidget* StudioEditor::dock(const QString& title, QWidget* content, int area)
 {
@@ -55,36 +56,57 @@ StudioEditor::StudioEditor(MainWindow* window) : QObject(window), window(window)
     toolbar->setMovable(false);
     window->addToolBar(toolbar);
     playAction = new QAction(window->style()->standardIcon(QStyle::SP_MediaPlay),"Play",this);
-    transport=new QWidget(toolbar); transport->setObjectName("StudioTransport");
+    // One managed toolbar widget: equal flexible side columns keep the transport
+    // centered without painting an unregistered child over a click-catching spacer.
+    auto toolbarContents=new QWidget;
+    toolbarContents->setObjectName("StudioToolbarContents");
+    toolbarContents->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Preferred);
+    auto toolbarLayout=new QGridLayout(toolbarContents);
+    toolbarLayout->setContentsMargins(0,0,0,0); toolbarLayout->setHorizontalSpacing(8);
+    toolbarLayout->setColumnStretch(0,1); toolbarLayout->setColumnStretch(2,1);
+    auto leftTools=new QWidget; leftTools->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);
+    auto leftLayout=new QHBoxLayout(leftTools); leftLayout->setContentsMargins(0,0,0,0); leftLayout->setSpacing(2);
+    transport=new QWidget; transport->setObjectName("StudioTransport");
+    transport->setSizePolicy(QSizePolicy::Fixed,QSizePolicy::Fixed);
+    toolbarLayout->addWidget(leftTools,0,0);
+    toolbarLayout->addWidget(transport,0,1,Qt::AlignCenter);
     auto transportLayout=new QHBoxLayout(transport); transportLayout->setContentsMargins(0,0,0,0); transportLayout->setSpacing(4);
     auto playButton=new QToolButton(transport); playButton->setObjectName("StudioPlayButton");
     playButton->setDefaultAction(playAction); playButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     playButton->setFixedSize(92,30);
-    playButton->setStyleSheet("QToolButton { background:#246548; color:white; font-weight:bold; border:1px solid #43866a; border-radius:4px; }");
+    playButton->setStyleSheet("QToolButton { background:#246548; color:white; font-weight:bold; border:1px solid #43866a; border-radius:4px; }"
+        "QToolButton:disabled { background:#343b39; color:#8b9891; border-color:#48524c; }");
     transportLayout->addWidget(playButton);
     pauseAction=new QAction(window->style()->standardIcon(QStyle::SP_MediaPause),"Pause",this); pauseAction->setCheckable(true);
     resetGameAction=new QAction(window->style()->standardIcon(QStyle::SP_BrowserReload),"Reset game",this);
     auto pauseButton=new QToolButton(transport); pauseButton->setObjectName("StudioPauseButton"); pauseButton->setDefaultAction(pauseAction); pauseButton->setToolTip("Pause / resume emulation");
     auto resetButton=new QToolButton(transport); resetButton->setObjectName("StudioResetGameButton"); resetButton->setDefaultAction(resetGameAction); resetButton->setToolTip("Restart game (save data and profiles are retained)");
     for(auto button : {pauseButton,resetButton}) { button->setFixedSize(30,30); transportLayout->addWidget(button); }
-    transport->adjustSize(); toolbar->setMinimumHeight(42); transport->show();
-    connect(pauseAction,&QAction::triggered,this,[this](bool paused) { this->window->studioPause(paused); });
-    connect(resetGameAction,&QAction::triggered,window,&MainWindow::studioReset);
+    transportLayout->setSizeConstraint(QLayout::SetFixedSize); toolbar->setMinimumHeight(42);
+    connect(pauseAction,&QAction::triggered,this,[this](bool paused) { this->window->studioPause(paused); syncTransport(); });
+    connect(resetGameAction,&QAction::triggered,this,[this] { this->window->studioReset(); syncTransport(); });
     playAction->setCheckable(true);
     playAction->setToolTip("Enter fullscreen gameplay. Escape returns to the editor without restarting the game.");
     menu->addAction(playAction);
     connect(playAction, &QAction::toggled, this, &StudioEditor::setPlayMode);
-    auto saveAction = toolbar->addAction("Save configuration");
+    auto saveAction = new QAction("Save configuration",this);
     saveAction->setShortcut(QKeySequence::Save);
-    auto loadAction = toolbar->addAction("Load configuration");
+    auto loadAction = new QAction("Load configuration",this);
+    for(auto action : {saveAction,loadAction}) {
+        auto button=new QToolButton(leftTools); button->setDefaultAction(action); button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        leftLayout->addWidget(button);
+    }
+    leftLayout->addStretch();
     menu->addAction(saveAction);
     menu->addAction(loadAction);
     connect(saveAction, &QAction::triggered, this, [this] { this->window->panel->setFocus(); save(); });
     connect(loadAction, &QAction::triggered, this, &StudioEditor::load);
-    profile = new QLabel(toolbar);
+    profile = new QLabel;
     profile->setTextFormat(Qt::PlainText);
-    auto spacer=new QWidget; spacer->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Preferred); toolbar->addWidget(spacer);
-    profile->setMaximumWidth(300); toolbar->addWidget(profile);
+    profile->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);
+    profile->setAlignment(Qt::AlignRight|Qt::AlignVCenter);
+    toolbarLayout->addWidget(profile,0,2);
+    toolbar->addWidget(toolbarContents);
     auto resetAction=menu->addAction("Reset Workspace Layout");
     connect(resetAction,&QAction::triggered,this,&StudioEditor::resetWorkspace);
     exitPlay=new QPushButton("Exit Play (Esc)",window); exitPlay->setObjectName("StudioExitPlay"); exitPlay->setAttribute(Qt::WA_NativeWindow); exitPlay->setCursor(Qt::ArrowCursor); exitPlay->hide();
@@ -217,6 +239,12 @@ StudioEditor::StudioEditor(MainWindow* window) : QObject(window), window(window)
     restoreWorkspace();
     window->setTabPosition(Qt::AllDockWidgetAreas,QTabWidget::North);
 
+    auto thread=window->getEmuInstance()->getEmuThread();
+    connect(thread,&EmuThread::windowEmuStart,this,&StudioEditor::syncTransport);
+    connect(thread,&EmuThread::windowEmuStop,this,&StudioEditor::syncTransport);
+    connect(thread,&EmuThread::windowEmuPause,this,&StudioEditor::syncTransport);
+    connect(thread,&EmuThread::windowEmuReset,this,&StudioEditor::syncTransport);
+    syncTransport();
     recognitionClock.start();
     auto timer = new QTimer(this);
     timer->setInterval(100); // Bounded latest-frame mailbox; recognition continues in Play/fullscreen.
@@ -369,6 +397,20 @@ void StudioEditor::editElement()
     applyPresentation();
 }
 
+void StudioEditor::syncTransport()
+{
+    auto thread=window->getEmuInstance()->getEmuThread();
+    const bool active=thread->emuIsActive(), paused=active && !thread->emuIsRunning();
+    playAction->setEnabled(active && (playMode || !window->isFullScreen()));
+    pauseAction->setEnabled(active); resetGameAction->setEnabled(active);
+    pauseAction->setChecked(paused);
+    const QString text=paused ? "Resume" : "Pause", tip=paused ? "Resume emulation" : "Pause emulation";
+    if(pauseAction->text()!=text || pauseAction->toolTip()!=tip) {
+        pauseAction->setText(text); pauseAction->setToolTip(tip);
+        pauseAction->setIcon(window->style()->standardIcon(paused ? QStyle::SP_MediaPlay : QStyle::SP_MediaPause));
+    }
+}
+
 void StudioEditor::exitPlayMode() { playAction->setChecked(false); }
 
 void StudioEditor::setPlayMode(bool play)
@@ -395,6 +437,7 @@ void StudioEditor::setPlayMode(bool play)
         for(auto dock : docks) dock->toggleViewAction()->setEnabled(!window->isFullScreen());
         playAction->setText("Play");
     }
+    syncTransport();
     applyPresentation();
     window->studioReleaseKeys();
     window->panel->setFocus(Qt::OtherFocusReason);
@@ -425,7 +468,7 @@ void StudioEditor::setFullscreen(bool full)
             docks[i]->setVisible(fullscreenVisibility.value(i, true));
             docks[i]->toggleViewAction()->setEnabled(!playMode);
         }
-        playAction->setEnabled(true);
+        syncTransport();
     }
     applyPresentation();
     window->panel->setFocus(Qt::OtherFocusReason);

@@ -228,9 +228,6 @@ void StudioEditor::resetPlayMouse()
 }
 bool StudioEditor::eventFilter(QObject* object,QEvent* event)
 {
-    if(event->type()==QEvent::Resize && object==toolbar) {
-        if(transport) transport->move((toolbar->width()-transport->width())/2,(toolbar->height()-transport->height())/2);
-    }
     auto target=qobject_cast<QWidget*>(object);
     bool belongs=target && (target==window || window->isAncestorOf(target));
     if(!belongs) return QObject::eventFilter(object,event);

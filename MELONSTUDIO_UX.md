@@ -64,3 +64,24 @@ real-ROM recognition accuracy nor Windows GUI execution is established by CI.
 The old rectangular-reference and polygon-only widget workflows remain usable
 until their replacements are implemented. No placeholder library or inactive UV
 buttons were added. See [MELONSTUDIO.md](MELONSTUDIO.md) for the current user guide.
+
+## Transport mouse-interaction correction
+
+The former transport was an unmanaged child manually moved over the toolbar's
+expanding spacer. It could paint visibly while mouse hit-testing selected the
+spacer instead of a button. Earlier `QToolButton::click()` checks bypassed that
+hit-testing. The new layout registers its contents through `QToolBar::addWidget`
+and centers the transport between two managed side columns, without overlays
+or resize-event positioning. Start/stop/pause/reset signals and a periodic
+state refresh synchronize the actions. Reset also clears the manual-pause flag
+and synchronizes the System-menu checkmark. No Milestone B feature is added.
+
+Regression evidence: the original code fails the native hit-test at the visible
+Pause button. The replacement passes XTest pointer press/release tests at the
+visible Play/Pause/Reset and Save/Load controls, including long titles and window
+resizing. A generated DS cartridge increments its own RAM counter; the tests
+verify frozen/resumed execution and reset/restart while preserving loaded SRAM,
+the `.sav` file, ROM bytes and profile JSON. Native Escape restores fullscreen
+back to the saved editor workspace. Backend-driven state changes and stopping
+the console are checked too. These GUI tests run on Linux/X11, not Windows;
+Windows CI only compiles the application and runs bounded headless tests.

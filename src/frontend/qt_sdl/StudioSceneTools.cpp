@@ -260,10 +260,7 @@ void StudioEditor::tickScreens()
         if (runtimeState == -2 || previousState != lastMatch.state) applyPresentation();
         else updateDebug();
     }
-    auto thread=window->getEmuInstance()->getEmuThread();
-    bool active=thread->emuIsActive();
-    pauseAction->setEnabled(active); resetGameAction->setEnabled(active);
-    pauseAction->setChecked(active && !thread->emuIsRunning()); pauseAction->setText(pauseAction->isChecked() ? "Resume" : "Pause");
+    syncTransport(); // Also catch state changes that do not emit a frontend signal.
     captureRequested.store(originals->isVisible() || hudCanvas->isVisible() || teachingPending
         || (document.sceneToolsEnabled && document.automatic));
 }

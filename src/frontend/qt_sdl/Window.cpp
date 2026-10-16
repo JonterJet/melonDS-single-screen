@@ -1697,6 +1697,7 @@ void MainWindow::onReset()
 {
     if (!emuThread->emuIsActive()) return;
 
+    pausedManually = false;
     emuThread->emuReset();
 }
 
@@ -2299,8 +2300,11 @@ void MainWindow::onEmuPause(bool pause)
 
 void MainWindow::onEmuReset()
 {
+    const bool running = emuThread->emuIsRunning();
+    if (running) pausedManually = false;
     if (!hasMenu) return;
 
+    actPause->setChecked(emuThread->emuIsActive() && !running);
     actUndoStateLoad->setEnabled(false);
 }
 

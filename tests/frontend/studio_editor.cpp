@@ -33,6 +33,10 @@ extern const char* kScreenFS;
 #include <QToolButton>
 #include <QStackedWidget>
 #include <QLibrary>
+#include <cstring>
+#include <QMenuBar>
+#include <QWindow>
+#include <memory>
 #include "StudioTree.h"
 #include <iostream>
 #include <stdexcept>
@@ -133,6 +137,62 @@ static void dragTreeGesture(QTreeWidget* tree,QTreeWidgetItem* source,QTreeWidge
     motion(display,-1,from.x()+20,from.y()+5,0); flush(display); settle(400);
     close(display);
 }
+// Route through the window system and Qt hit-testing. QAbstractButton::click()
+// and QAction::trigger() bypass overlapping widgets and cannot catch this bug.
+static void clickVisible(QWidget* widget)
+{
+    require(widget && widget->isVisible() && widget->isEnabled(),"Mouse target must be visible and enabled");
+    QLibrary x11("libX11.so.6"), xtst("libXtst.so.6");
+    auto open=reinterpret_cast<void*(*)(const char*)>(x11.resolve("XOpenDisplay"));
+    auto close=reinterpret_cast<int(*)(void*)>(x11.resolve("XCloseDisplay"));
+    auto flush=reinterpret_cast<int(*)(void*)>(x11.resolve("XFlush"));
+    auto motion=reinterpret_cast<int(*)(void*,int,int,int,unsigned long)>(xtst.resolve("XTestFakeMotionEvent"));
+    auto button=reinterpret_cast<int(*)(void*,unsigned int,int,unsigned long)>(xtst.resolve("XTestFakeButtonEvent"));
+    require(open && close && flush && motion && button,"X11/XTest required for visible-button clicks");
+    QPoint point=widget->mapToGlobal(widget->rect().center());
+    auto hit=QApplication::widgetAt(point);
+    if(hit!=widget && !widget->isAncestorOf(hit)) {
+        std::cerr << "Mouse target " << widget->objectName().toStdString() << " is covered by "
+                  << (hit ? hit->metaObject()->className() : "no widget") << " "
+                  << (hit ? hit->objectName().toStdString() : "") << "\n";
+        throw std::runtime_error("Visible toolbar button does not receive mouse hit-testing");
+    }
+    auto display=open(nullptr); require(display,"Open X display for button click");
+    motion(display,-1,point.x(),point.y(),0); flush(display); settle(25);
+    button(display,1,1,0); flush(display); settle(25);
+    button(display,1,0,0); flush(display); settle(100);
+    close(display);
+}
+static void pressEscape()
+{
+    QLibrary x11("libX11.so.6"), xtst("libXtst.so.6");
+    auto open=reinterpret_cast<void*(*)(const char*)>(x11.resolve("XOpenDisplay"));
+    auto close=reinterpret_cast<int(*)(void*)>(x11.resolve("XCloseDisplay"));
+    auto flush=reinterpret_cast<int(*)(void*)>(x11.resolve("XFlush"));
+    auto keycode=reinterpret_cast<unsigned char(*)(void*,unsigned long)>(x11.resolve("XKeysymToKeycode"));
+    auto key=reinterpret_cast<int(*)(void*,unsigned int,int,unsigned long)>(xtst.resolve("XTestFakeKeyEvent"));
+    require(open && close && flush && keycode && key,"X11/XTest required for Escape");
+    auto display=open(nullptr); require(display,"Open X display for Escape");
+    auto code=keycode(display,0xff1b); require(code,"Escape keycode unavailable");
+    key(display,code,1,0); flush(display); settle(30);
+    key(display,code,0,0); flush(display); settle(100); close(display);
+}
+// Own ARM9 program increments its own RAM counter; ARM7 branches to itself.
+// The ordinary cartridge header exercises the emulator's EEPROM save path.
+// No Nintendo code, logo, BIOS, artwork, retail ROM or game address is used.
+static QByteArray transportROM()
+{
+    QByteArray rom(128*1024,0); melonDS::NDSHeader header{};
+    std::memcpy(header.GameTitle,"Studio Test",11); std::memcpy(header.GameCode,"ZUX0",4);
+    header.ARM9ROMOffset=0x8000; header.ARM9EntryAddress=header.ARM9RAMAddress=0x02000000; header.ARM9Size=28;
+    header.ARM7ROMOffset=0x9000; header.ARM7EntryAddress=header.ARM7RAMAddress=0x03800000; header.ARM7Size=4;
+    header.ROMSize=rom.size(); header.HeaderSize=0x200;
+    std::memcpy(rom.data(),&header,sizeof(header));
+    const quint32 arm9[]={0xe59f0010,0xe5901000,0xe2811001,0xe5801000,0xeafffffb,0xe1a00000,0x02010000};
+    const quint32 arm7=0xeafffffe;
+    std::memcpy(rom.data()+header.ARM9ROMOffset,arm9,sizeof(arm9));
+    std::memcpy(rom.data()+header.ARM7ROMOffset,&arm7,sizeof(arm7)); return rom;
+}
 static void drag(QWidget* widget, QPoint from, QPoint to)
 {
     QMouseEvent press(QEvent::MouseButtonPress,QPointF(from),QPointF(from),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
@@ -165,6 +225,10 @@ int main(int argc, char** argv)
         settle();
         auto editor = window->findChild<StudioEditor*>();
         require(editor && window->centralWidget() == window->panel, "Live central viewport missing");
+        for(const char* id : {"StudioPlayButton","StudioPauseButton","StudioResetGameButton"}) {
+            auto button=window->findChild<QToolButton*>(id);
+            require(button && !button->isEnabled(),"Inactive console must start with disabled transport controls");
+        }
         auto docks = window->findChildren<QDockWidget*>();
         require(docks.size() == 7, "Expected editor and Mario Kart tool panels");
         auto outline = window->findChild<QTreeWidget*>("StudioOutliner");
@@ -229,7 +293,7 @@ int main(int argc, char** argv)
         require(!docks[0]->isVisible() && docks[1]->isVisible(), "Editor mode must restore dock visibility");
         auto toolbar = window->findChild<QToolBar*>("MelonStudio.Toolbar");
         auto playButton=window->findChild<QWidget*>("StudioTransport");
-        require(playButton && std::abs(playButton->geometry().center().x()-toolbar->width()/2)<=1,"Transport controls must be centered");
+        require(playButton && std::abs(playButton->mapTo(toolbar,playButton->rect().center()).x()-toolbar->rect().center().x())<=1,"Transport controls must be centered");
         window->toggleFullscreen(); settle();
         require(window->isFullScreen() && !toolbar->isVisible(), "Fullscreen must hide the editor toolbar");
         for (auto d : docks) require(!d->isVisible(), "Fullscreen must hide all editor panels");
@@ -538,30 +602,92 @@ int main(int argc, char** argv)
         auto floatingBefore=originalDock->geometry(); editor->setGame("workspace-switch","Game switch"); settle();
         require(originalDock->isFloating() && originalDock->geometry()==floatingBefore,"Changing games must not reset workspace");
         if(!dsi) {
-            // Asset-free DS console exercises the real EmuThread controls. This is
-            // not a claim to have booted/tested a retail ROM or DSi firmware.
-            auto thread=inst->getEmuThread(); int resets=0;
-            QObject::connect(thread,&EmuThread::windowEmuReset,editor,[&] { ++resets; });
-            thread->emuReset(); thread->emuPause(); settle(220);
+            // Boot an original generated test ROM through the real loading path.
+            // DSi boot requires proprietary NAND/firmware and is not claimed here.
+            auto romBytes=transportROM(); QByteArray saveBytes(8192,char(0x5a));
+            QString romPath=temporary.path()+"/transport-test.nds", savePath=temporary.path()+"/transport-test.sav";
+            auto write=[&](const QString& path,const QByteArray& bytes) { QFile file(path); require(file.open(QIODevice::WriteOnly) && file.write(bytes)==bytes.size(),"Write synthetic cartridge/save fixture"); };
+            auto read=[&](const QString& path) { QFile file(path); require(file.open(QIODevice::ReadOnly),"Read preserved fixture"); return file.readAll(); };
+            write(romPath,romBytes); write(savePath,saveBytes);
+            require(window->preloadROMs({romPath},{},true),"Boot generated DS ROM"); settle(150);
+            auto thread=inst->getEmuThread(); auto resets=std::make_shared<int>(0);
+            QObject::connect(thread,&EmuThread::windowEmuReset,editor,[resets] { ++*resets; });
+            window->studioPause(true); settle(150);
+            auto nds=inst->getNDS(); require(nds && nds->GetNDSSaveLength()==unsigned(saveBytes.size()),"Generated ROM must use real cartridge save memory");
+            auto counter=[&] { require(!thread->emuIsRunning(),"Read emulated RAM only while paused"); return nds->ARM9Read32(0x02010000); };
             auto pauseButton=window->findChild<QToolButton*>("StudioPauseButton");
             auto resetButton=window->findChild<QToolButton*>("StudioResetGameButton");
             auto gamePlay=window->findChild<QToolButton*>("StudioPlayButton");
+            auto toolbar=window->findChild<QToolBar*>("MelonStudio.Toolbar");
+            auto contents=window->findChild<QWidget*>("StudioToolbarContents");
+            bool managed=false; for(auto action:toolbar->actions()) if(toolbar->widgetForAction(action)==contents && contents) managed=true;
+            require(managed,"Transport contents must belong to the QToolBar layout");
             require(pauseButton->isEnabled() && pauseButton->defaultAction()->isChecked(),"Toolbar must reflect paused emulation");
-            pauseButton->click(); settle(220); require(thread->emuIsRunning() && !pauseButton->defaultAction()->isChecked(),"Pause toolbar must resume real thread");
-            pauseButton->click(); settle(220); require(!thread->emuIsRunning() && pauseButton->defaultAction()->isChecked(),"Pause toolbar must pause real thread");
-            gamePlay->click(); settle(220); require(editor->isPlayMode() && window->isFullScreen() && thread->emuIsRunning(),"Play button must resume emulation and fullscreen");
-            QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier); QApplication::sendEvent(window->panel,&escape); settle();
-            require(!editor->isPlayMode() && thread->emuIsRunning(),"Exit Play must keep emulation running");
+            auto frozen=counter(); settle(250); require(counter()==frozen,"Paused emulation must freeze the test program");
+            clickVisible(pauseButton); settle(220); require(thread->emuIsRunning() && !pauseButton->defaultAction()->isChecked(),"Mouse Pause must resume real thread");
+            clickVisible(pauseButton); settle(100); require(!thread->emuIsRunning() && pauseButton->defaultAction()->isChecked(),"Mouse Pause must pause real thread");
+            require(counter()>frozen,"Resumed ROM program must make progress");
+            frozen=counter(); settle(200); require(counter()==frozen,"Mouse Pause must stop RAM counter progress");
+            // Long titles and editor resizing must not put a spacer over the buttons.
+            for(int width : {980,1460}) {
+                contents->findChild<QLabel*>()->setText(QString(160,'W')); window->resize(width,850); settle(100);
+                auto group=window->findChild<QWidget*>("StudioTransport");
+                require(std::abs(group->mapTo(toolbar,group->rect().center()).x()-toolbar->rect().center().x())<=1,"Managed transport must stay centered after resizing");
+                clickVisible(pauseButton); require(thread->emuIsRunning(),"Resized toolbar resume click");
+                clickVisible(pauseButton); require(!thread->emuIsRunning(),"Resized toolbar pause click");
+            }
+            // Save/Load remain clickable in the same managed toolbar.
+            for(const QString& text : {QString("Save configuration"),QString("Load configuration")}) {
+                QToolButton* target=nullptr;
+                for(auto button:contents->findChildren<QToolButton*>()) if(button->defaultAction() && button->defaultAction()->text()==text) target=button;
+                clickVisible(target);
+            }
+            auto editorGeometry=window->saveGeometry(), editorDocks=window->saveState(3);
+            QVector<bool> visible; for(auto dock:window->findChildren<QDockWidget*>()) visible.append(dock->isVisible());
+            clickVisible(gamePlay); settle(100);
+            require(editor->isPlayMode() && window->isFullScreen() && window->windowHandle()->visibility()==QWindow::FullScreen && thread->emuIsRunning(),"Visible Play click must resume and enter Qt fullscreen");
+            require(!toolbar->isVisible() && !window->menuBar()->isVisible() && window->panel->size()==window->contentsRect().size(),"Fullscreen must expose only game viewport");
+            for(auto dock:window->findChildren<QDockWidget*>()) require(!dock->isVisible(),"Mouse Play must hide every dock");
+            pressEscape(); require(!editor->isPlayMode() && !window->isFullScreen() && thread->emuIsRunning(),"Native Escape must return to running editor");
+            require(window->saveGeometry()==editorGeometry && window->saveState(3)==editorDocks,"Mouse Play/Escape must restore editor workspace exactly");
+            int index=0; for(auto dock:window->findChildren<QDockWidget*>()) require(dock->isVisible()==visible[index++],"Restore dock visibility after Escape");
+            clickVisible(pauseButton); require(!thread->emuIsRunning(),"Pause before reset fixture");
+            require(pauseButton->defaultAction()->text()=="Resume","Pause text must follow actual state");
+            QAction* systemPause=nullptr;
+            for(auto action:window->menuBar()->actions()) if(action->text()=="System")
+                for(auto item:action->menu()->actions()) if(item->text()=="Pause") systemPause=item;
+            require(systemPause && systemPause->isChecked(),"System menu and toolbar must agree while paused");
+            // A reset must clear the test program's RAM, reload its entry point,
+            // resume execution and preserve the loaded cartridge's SRAM and files.
+            constexpr quint32 marker=0x80000000; nds->ARM9Write32(0x02010000,marker);
             QString preservedPath=editor->configurationPath(); require(editor->saveOnClose(),"Pre-reset profile save");
             StudioDocument preserved; require(preserved.load(preservedPath,error),"Pre-reset read"); auto preservedJson=preserved.toJson();
-            resetButton->click(); settle(220); require(resets==2 && thread->emuIsRunning(),"Reset toolbar must dispatch existing reset operation");
+            clickVisible(resetButton);
+            // Reset completion is queued from the emulation thread. ROM reset can
+            // itself exceed a click's event-pump interval; wait for that signal.
+            QElapsedTimer resetWait; resetWait.start();
+            while(*resets==0 && resetWait.elapsed()<2000) settle(20);
+            require(*resets==1 && thread->emuIsRunning(),"Visible Reset click must dispatch one existing reset");
+            require(!pauseButton->defaultAction()->isChecked() && pauseButton->defaultAction()->text()=="Pause" && !systemPause->isChecked(),"Reset must synchronize toolbar and System menu paused state");
+            clickVisible(pauseButton); nds=inst->getNDS();
+            require(counter()>0 && counter()<marker,"Reset must clear RAM and restart the generated program");
+            require(nds->GetNDSSaveLength()==unsigned(saveBytes.size()) && std::memcmp(nds->GetNDSSave(),saveBytes.constData(),saveBytes.size())==0,"Reset must preserve loaded cartridge save memory");
+            require(read(savePath)==saveBytes && read(romPath)==romBytes,"Reset must preserve save file and ROM bytes");
             require(editor->configurationPath()==preservedPath && preserved.load(preservedPath,error) && preserved.toJson()==preservedJson,"Reset must preserve profiles");
-            thread->emuStop(true); settle();
+            // Changes from menu/hotkey/backend paths must update the same actions.
+            window->studioPause(false); settle(150); require(!pauseButton->defaultAction()->isChecked(),"External resume synchronization");
+            window->studioPause(true); settle(150); require(pauseButton->defaultAction()->isChecked(),"External pause synchronization");
+            thread->emuReset(); settle(150);
+            require(!pauseButton->defaultAction()->isChecked() && !systemPause->isChecked(),"Backend reset synchronization");
+            thread->emuStop(true); settle(150);
+            require(!gamePlay->isEnabled() && !pauseButton->isEnabled() && !resetButton->isEnabled(),"Stopped console must disable transport");
+            std::cout << "Native X11 mouse clicks: Play/fullscreen/Escape/workspace, Pause/RAM freeze/resume, Reset/RAM restart/SRAM/save/profile/ROM preservation, resizing and backend state sync passed\n";
         }
         std::cout << "Inline profile/scene/widget naming, copy/paste/duplicate/menu operations, real drag gestures, editing/runtime isolation, transport controls and workspace persistence passed\n";
         std::cout << (dsi ? "DSi" : "DS") << ": editor panels, Inspector, ordering, scenes, mode toggle/fullscreen, per-game persistence, validation, software/OpenGL screen previews, input isolation passed\n";
     }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; result = 1; }
+    if(inst->getEmuThread()->emuIsActive()) inst->getEmuThread()->emuStop(true);
     window->close(); settle();
     SDL_Quit();
     return result;

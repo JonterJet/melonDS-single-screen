@@ -142,6 +142,7 @@ private:
     void selectElement();
     void editElement();
     void setPlayMode(bool play);
+    void syncTransport();
     bool save();
     void load();
     void showError(const QString& error);
